@@ -12,3 +12,4 @@ ref/
 out/
 log/
 *.log
+lightning_logs/
