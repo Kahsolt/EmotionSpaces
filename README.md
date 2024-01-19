@@ -21,6 +21,10 @@
 |  [Twitter I](https://1drv.ms/u/s!AqDZbp_iImWrhqI8k_S2uLqab_urdg?e=zwbdPG)               | 1269    | 2-dim prob                    |  |
 |         [FI](https://1drv.ms/u/s!AqDZbp_iImWrhppifntgxRuw_6o2Ww?e=u2Tv7I)               | 23185   | Mikels 8-dim clf              | contain invalid samples (banned pictures) |
 | [EmoSet-118K](https://www.dropbox.com/scl/fi/myue506itjfc06m7svdw6/EmoSet-118K.zip?rlkey=7f3oyjkr6zyndf0gau7t140rv&dl=0) | 118k | Mikels 8-dim + bright/colorful clf |  |
+| [LUCFER](https://cil.cs.ucf.edu/dataset-2/labeled-ucf-emotion-recognition/) | 883k |  | web links |
+| [OASIS](https://www.dropbox.com/sh/4qaoqs77c9e5muh/AABBw07ozE__2Y0LVQHVL-8ca?dl=1) | 900 | VA | the gender matters |
+| [FER-2013](https://www.kaggle.com/datasets/deadskull7/fer2013) | 35887 | Ekman+neutral 7dim clf |
+| [Emotic](https://github.com/Tandon-A/emotic) | ? | 26-dim clf + VAD | **person bbox** |
 
 Categorical Emotion States ([ref](https://zhuanlan.zhihu.com/p/617187076)):
 
@@ -50,6 +54,10 @@ Plutchik Wheel of Emotions:
   - FI (see `Emotion Analysis - Emotion Dataset`): [https://qzyou.github.io/](https://qzyou.github.io/)
   - UnBiasedEmo & Emotion-6: [https://rpand002.github.io/emotion.html](https://rpand002.github.io/emotion.html)
   - EmoSet: [https://github.com/JingyuanYY/EmoSet](https://github.com/JingyuanYY/EmoSet)
+  - LUCFER: [https://cil.cs.ucf.edu/dataset-2/labeled-ucf-emotion-recognition/](https://cil.cs.ucf.edu/dataset-2/labeled-ucf-emotion-recognition/)
+  - OASIS: [https://www.dropbox.com/sh/4qaoqs77c9e5muh/AABBw07ozE__2Y0LVQHVL-8ca?dl=0](https://www.dropbox.com/sh/4qaoqs77c9e5muh/AABBw07ozE__2Y0LVQHVL-8ca?dl=0)
+  - FER-2013: [https://www.kaggle.com/datasets/deadskull7/fer2013](https://www.kaggle.com/datasets/deadskull7/fer2013)
+  - Emotic: [https://github.com/Tandon-A/emotic](https://github.com/Tandon-A/emotic)
 
 ----
 by Armit
