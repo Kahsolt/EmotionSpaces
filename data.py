@@ -3,7 +3,7 @@
 # Create Time: 2023/12/27
 
 import pandas as pd
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as T
 
 from utils import *
@@ -66,7 +66,7 @@ class Emotion6Dim7(Emotion6):
   def __getitem__(self, idx:int):
     img = self.get_img(idx)
     row = self.meta(idx)
-    prob = row[3:9]
+    prob = np.asarray(row[3:9], dtype=np.float32)
     return img, prob
 
 class Emotion6Dim6(Emotion6):
@@ -76,7 +76,7 @@ class Emotion6Dim6(Emotion6):
   def __getitem__(self, idx:int):
     img = self.get_img(idx)
     row = self.meta(idx)
-    prob = np.asarray(row[3:8])
+    prob = np.asarray(row[3:8], dtype=np.float32)
     prob /= prob.sum()    # re-norm to 1
     return img, prob
 
@@ -87,7 +87,7 @@ class Emotion6VA(Emotion6):
   def __getitem__(self, idx:int):
     img = self.get_img(idx)
     row = self.meta(idx)
-    prob = row[1:3]
+    prob = np.asarray(row[1:3], dtype=np.float32)
     return img, prob
 
 
