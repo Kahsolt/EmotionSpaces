@@ -8,7 +8,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import Optimizer, SGD, Adam
-from torch.optim.lr_scheduler import CyclicLR
 from torchvision.models.resnet import resnet50, ResNet50_Weights
 from lightning import LightningModule, Trainer, seed_everything
 
@@ -20,18 +19,24 @@ from utils import *
 BATCH_SIZE = 32
 EPOCH = 100
 BASE_LR = [2e-6, 4e-5, 1e-4, 1e-4]
-MAX_LR = [2e-5, 4e-4, 1e-3, 1e-3]
-MOMENTUM = 0.9
+LOSS_L = 1
 LOSS_W = 10
+MODEL_HEADS = {
+  'Polar':  2,
+  'VA':     2,
+  'Ekman':  6,
+  'EkmanN': 7,
+  'Mikels': 8,
+}
 
 
 class MultiTaskResNet(nn.Module):
 
-  def __init__(self, load_base:bool=False):
+  def __init__(self, d_x:int=32, load_base:bool=False):
     super().__init__()
 
     # 交换空间的向量深度
-    dim = 32
+    print('d_x:', d_x)
     # 预训练的ResNet模型
     model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1 if load_base else None)
     # features部分保持不变
@@ -43,32 +48,24 @@ class MultiTaskResNet(nn.Module):
       model.layer1,
       model.layer2,
       model.layer3,
-      model.layer4,     # [B, C=2048, H//32, W//32]
-      model.avgpool,    # [B, C=2048, 1, 1]
-      nn.Flatten(start_dim=1),
+      model.layer4,   # [B, C=2048, H//32, W//32]
+      model.avgpool,  # [B, C=2048, 1, 1]
+      nn.Flatten(1),  # [B, D=2048]
     )
     del model
     # 将fc部分改造为降维MLP
     self.proj = nn.Sequential(
-      nn.LazyLinear(256),
+      nn.LazyLinear(256),   # [B, D=256]
       nn.SiLU(),
-      nn.Linear(256, dim),    # [B, D=32]
+      nn.Linear(256, d_x),  # [B, D=32]
     )
     # 各下游任务使用不同的线性投影/逆投影
     self.heads = nn.ModuleDict({
-      'Polar':  nn.Linear(dim, 2),
-      'VA':     nn.Linear(dim, 2),
-      'Ekman':  nn.Linear(dim, 6),
-      'EkmanN': nn.Linear(dim, 7),
-      'Mikels': nn.Linear(dim, 8),
+      name: nn.Linear(d_x, d_out) for name, d_out in MODEL_HEADS.items()
     })
     self.invheads = nn.ModuleDict({
-      name: nn.LazyLinear(dim) for name in self.heads.keys()
+      name: nn.LazyLinear(d_x) for name in self.heads.keys()
     })
-
-  @property
-  def head_names(self) -> List[str]:
-    return [name for name, _ in self.heads.named_modules()]
 
   def forward(self, x:Tensor, head:str) -> Tensor:
     fmap = self.fvecs(x)
@@ -92,113 +89,107 @@ class LitModel(LightningModule):
     self.model = model
     self.head = None
     self.is_ldl = None
+    self.freeze_modules = []
+    self.lr_list = [1e-6, 2e-4, 1e-4, 1e-4]
 
-  def set_mode(self, head:str, is_ldl:bool=False):
+  def set_mode(self, head:str, is_ldl:bool=False, lr_list:List[float]=None, freeze_modules:List[str]=None):
     self.head = head
     self.is_ldl = is_ldl
+    if lr_list:
+      if isinstance(lr_list, float): lr_list = [lr_list] * len(self.lr_list)
+      assert len(lr_list) == len(self.lr_list)
+      self.lr_list = lr_list
+    if freeze_modules:
+      self.freeze_modules = freeze_modules
 
   def configure_optimizers(self) -> Optimizer:
     param_groups = [
-      {'params': self.model.fvecs   .parameters(), 'lr': BASE_LR[0]},              
-      {'params': self.model.proj    .parameters(), 'lr': BASE_LR[1]},              
-      {'params': self.model.heads   .parameters(), 'lr': BASE_LR[2]},
-      {'params': self.model.invheads.parameters(), 'lr': BASE_LR[3]},
+      {'params': self.model.fvecs   .parameters(), 'lr': self.lr_list[0]} if 'fvecs' not in self.freeze_modules else None,
+      {'params': self.model.proj    .parameters(), 'lr': self.lr_list[1]} if 'proj'  not in self.freeze_modules else None,
+      {'params': self.model.heads   .parameters(), 'lr': self.lr_list[2]},
+      {'params': self.model.invheads.parameters(), 'lr': self.lr_list[3]},
     ]
-    #optim = Adam(param_groups)
-    optim = SGD(param_groups, momentum=MOMENTUM)
-    sched = CyclicLR(optim, base_lr=BASE_LR, max_lr=MAX_LR, step_size_up=1000, step_size_down=2000, mode='triangular2')
-    return {
-      'optimizer': optim,
-      'lr_scheduler': sched,
-    }
+    return Adam([it for it in param_groups if it])
 
   def optimizer_step(self, epoch:int, batch_idx:int, optim:Optimizer, optim_closure:Callable):
     super().optimizer_step(epoch, batch_idx, optim, optim_closure)
     if batch_idx % 10 == 0:
       self.log_dict({f'lr-{i}': group['lr'] for i, group in enumerate(optim.param_groups)})
 
-  def training_step(self, batch:Tuple[Tensor], batch_idx:int) -> Tensor:
+  def get_losses(self, batch:Tuple[Tensor], batch_idx:int) -> Tuple[Tensor, Dict[str, float]]:
     x, y = batch
     out, fvec, invfvec = self.model(x, self.head)
     if self.head in ['VA']:
       loss_task = F.mse_loss(out, y)
     elif self.head in ['Polar', 'Ekman', 'EkmanN', 'Mikels']:
-      loss_task = F.cross_entropy(out, y)
-      if self.is_ldl:
-        loss_task += F.kl_div(F.log_softmax(out, dim=-1), y, reduction='batchmean')
+      loss_clf = F.cross_entropy(out, y)
+      loss_ldl = F.kl_div(F.log_softmax(out, dim=-1), y, reduction='batchmean') if self.is_ldl else 0.0
+      loss_task = loss_clf + loss_ldl * LOSS_L
     loss_recon = F.mse_loss(invfvec, fvec)
     loss = loss_task + loss_recon * LOSS_W
     if batch_idx % 10 == 0:
       with torch.no_grad():
-        self.log_dict({
-          'train/l_task': loss_task.item(),
-          'train/l_rec': loss_recon.item(),
-          'train/l_total': loss.item(),
-        })
+        log_dict = {
+          'l_task': loss_task.item(),
+          'l_rec': loss_recon.item(),
+          'l_total': loss.item(),
+        }
+    else: log_dict = None
+    return loss, log_dict
+
+  def log_losses(self, log_dict:Dict[str, float], prefix:str='log'):
+    self.log_dict({f'{prefix}/{k}': v for k, v in log_dict.items()})
+
+  def training_step(self, batch:Tuple[Tensor], batch_idx:int) -> Tensor:
+    loss, log_dict = self.get_losses(batch, batch_idx)
+    if log_dict: self.log_losses(log_dict, 'train')
     return loss
 
   def validation_step(self, batch:Tuple[Tensor], batch_idx:int) -> Tensor:
-    x, y = batch
-    out, fvec, invfvec = self.model(x, self.head)
-    if self.head in ['VA']:
-      loss_task = F.mse_loss(out, y)
-    elif self.head in ['Polar', 'Ekman', 'EkmanN', 'Mikels']:
-      loss_task = F.cross_entropy(out, y)
-      if self.is_ldl:
-        loss_task += F.kl_div(F.log_softmax(out, dim=-1), y, reduction='batchmean')
-    loss_recon = F.mse_loss(invfvec, fvec)
-    loss = loss_task + loss_recon * LOSS_W
-    if batch_idx % 10 == 0:
-      with torch.no_grad():
-        self.log_dict({
-          'valid/l_task': loss_task.item(),
-          'valid/l_rec': loss_recon.item(),
-          'valid/l_total': loss.item(),
-        })
+    loss, log_dict = self.get_losses(batch, batch_idx)
+    if log_dict: self.log_losses(log_dict, 'valid')
+    return loss
 
 
-def train():
+def train(model:MultiTaskResNet, dataset_cls:Callable[[Any], Dataset], **kwargs):
+  head: str = kwargs.get('head')
+  is_ldl: bool = kwargs.get('is_ldl')
+  lr_list: List[float] = kwargs.get('lr_list', None)
+  freeze_modules: List[str] = kwargs.get('freeze_modules', None)
+  batch_size: int = kwargs.get('batch_size', 32)
+  epochs: int = kwargs.get('epochs', 10)
+  
   seed_everything(42)
-
-  sel = 0
-  if sel == 0:
-    head = 'VA'
-    is_ldl = False
-    trainset = Emotion6VA('train')
-    validset = Emotion6VA('test')
-  elif sel == 1:
-    head = 'Ekman'
-    is_ldl = True
-    trainset = Emotion6Dim6('train')
-    validset = Emotion6Dim6('test')
-
-  kwargs = {
+  dataloader_kwargs = {
     'num_workers': 0,
     'persistent_workers': False,
   }
-  trainloader = DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True, **kwargs)
-  validloader = DataLoader(validset, batch_size=1, shuffle=False, **kwargs)
-  model = MultiTaskResNet(load_base=True)
+  trainloader = DataLoader(dataset_cls('train'), batch_size, shuffle=True, **dataloader_kwargs)
+  validloader = DataLoader(dataset_cls('valid'), batch_size=1, shuffle=False, **dataloader_kwargs)
   lit = LitModel(model)
-  lit.set_mode(head, is_ldl)
+  lit.set_mode(head, is_ldl, lr_list, freeze_modules)
   trainer = Trainer(
-    max_epochs=100,
+    max_epochs=epochs,
     precision='16-mixed',
     benchmark=True,
+    enable_checkpointing=True,
   )
   trainer.fit(lit, trainloader, validloader)
 
 
-@torch.inference_mode()
-def infer():
-  fp = './lightning_logs/version_0/checkpoints/epoch=0-step=100.ckpt'
-  model = MultiTaskResNet()
-  lit = LitModel.load_from_checkpoint(fp, model=model)
-  model = lit.model.eval()
-  x = torch.rand([1, 3, 224, 224])
-  pred = model(x, 'VA')
-  print(pred)
-
-
 if __name__ == '__main__':
-  train()
+  DATASET_CONFIGS = [
+    # head, is_ldl, dataset_cls
+    ('Polar',  False, TweeterI),      # TwitterI
+    ('VA',     False, Emotion6VA),    # Emotion6, OASIS, GAPED
+    ('Ekman',  True,  Emotion6Dim6),  # Emotion6
+    ('Ekman',  False, FER2013),       # FER-2013
+    ('EkmanN', True,  Emotion6Dim7),  # Emotion6
+    ('EkmanN', False, FER2013),       # FER-2013
+    ('Mikels', True,  Abstract),      # Abstract
+    ('Mikels', False, FI),            # ArtPhoto, FI, EmoSet-118K
+  ]
+
+  model = MultiTaskResNet(load_base=True)
+  for head, is_ldl, dataset_cls in DATASET_CONFIGS:
+    train(model, dataset_cls, head, is_ldl)

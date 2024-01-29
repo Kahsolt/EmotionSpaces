@@ -10,12 +10,15 @@ from utils import *
 from utils import Path
 
 DATA_PATH = BASE_PATH / 'data'
+DATA_EMOTION6_PATH = DATA_PATH / 'Emotion6'
 DATA_ABSTRACT_PATH = DATA_PATH / 'testImages_abstract'
 DATA_ARTPHOTO_PATH = DATA_PATH / 'testImages_artphoto'
-DATA_EMOTION6_PATH = DATA_PATH / 'Emotion6'
-DATA_GAPED_PATH = DATA_PATH / 'GAPED'
 DATA_TWEETERI_PATH = DATA_PATH / 'Twitter_PCNN'
 DATA_FI_PATH = DATA_PATH / 'emotion_dataset'
+DATA_GAPED_PATH = DATA_PATH / 'GAPED'
+DATA_OASIS_PATH = DATA_PATH / 'OASIS_database_2016'
+DATA_FER_PATH = DATA_PATH / 'FER-2013'
+DATA_EMOSET_PATH = DATA_PATH / 'EmoSet-118K'
 
 RESIZE = (224, 224)
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
@@ -24,7 +27,7 @@ IMAGENET_STD  = (0.229, 0.224, 0.225)
 
 ''' Emotion6 '''
 
-class Emotion6:
+class Emotion6(Dataset):
 
   transform_train = T.Compose([
     T.RandomResizedCrop(RESIZE, interpolation=T.InterpolationMode.BILINEAR),
@@ -109,6 +112,25 @@ class TweeterI(Dataset):
   pass
 
 class FI(Dataset):
+  
+  pass
+
+
+''' others '''
+
+class GAPED(Dataset):
+  
+  pass
+
+class OASIS(Dataset):
+  
+  pass
+
+class FER2013(Dataset):
+  
+  pass
+
+class EmoSet(Dataset):
   
   pass
 
