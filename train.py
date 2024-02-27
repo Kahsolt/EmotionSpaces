@@ -135,19 +135,17 @@ class LitModel(LightningModule):
       if len(lr_list) == 1: lr_list *= len(self.lr_list)
       assert len(lr_list) == len(self.lr_list)
       self.lr_list = lr_list
-    if args.freeze_modules:
-      self.freeze_modules = args.freeze_modules
     self.acc = MulticlassAccuracy(n_class)
     self.mse = MeanSquaredError()
 
   def configure_optimizers(self) -> Optimizer:
     param_groups = [
-      {'params': self.model.fvecs   .parameters(), 'lr': self.lr_list[0]} if 'fvecs' not in self.freeze_modules else None,
-      {'params': self.model.proj    .parameters(), 'lr': self.lr_list[1]} if 'proj'  not in self.freeze_modules else None,
+      {'params': self.model.fvecs   .parameters(), 'lr': self.lr_list[0]},
+      {'params': self.model.proj    .parameters(), 'lr': self.lr_list[1]},
       {'params': self.model.heads   .parameters(), 'lr': self.lr_list[2]},
       {'params': self.model.invheads.parameters(), 'lr': self.lr_list[3]},
     ]
-    return Adam([it for it in param_groups if it], weight_decay=1e-5)
+    return Adam([it for it in param_groups if it['lr'] > 0], weight_decay=1e-5)
 
   def optimizer_step(self, epoch:int, batch_idx:int, optim:Optimizer, optim_closure:Callable):
     super().optimizer_step(epoch, batch_idx, optim, optim_closure)
@@ -246,7 +244,6 @@ if __name__ == '__main__':
   parser.add_argument('-B', '--batch_size', type=int, default=32)
   parser.add_argument('-E', '--epochs',     type=int, default=10)
   parser.add_argument('-lr', '--lr_list', nargs='+', type=eval, default=2e-4, help='lr list for each part: fvecs/proj/heads/invheads')
-  parser.add_argument('-fm', '--freeze_modules', nargs='+', help='freeze weights of backbone parts: fvecs/proj')
   parser.add_argument('--loss_w_ldl',   type=float, default=1,  help='loss weight for ldl (kl_div loss)')
   parser.add_argument('--loss_w_recon', type=float, default=10, help='loss weight for x-space reconstruction')
   parser.add_argument('--seed', type=int, default=114514)
