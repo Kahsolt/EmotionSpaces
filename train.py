@@ -83,7 +83,7 @@ class MultiTaskResNet(nn.Module):
     del model
     # 将fc部分改造为降维MLP
     self.proj = nn.Sequential(
-      nn.LazyLinear(256),   # [B, D=256]
+      nn.Linear(2048, 256), # [B, D=256]
       nn.SiLU(),
       nn.Linear(256, d_x),  # [B, D=32]
     )
@@ -92,7 +92,7 @@ class MultiTaskResNet(nn.Module):
       name: nn.Linear(d_x, d_out) for name, d_out in HEAD_DIMS.items()
     })
     self.invheads = nn.ModuleDict({
-      name: nn.LazyLinear(d_x) for name in self.heads.keys()
+      name: nn.Linear(HEAD_DIMS[name], d_x) for name in self.heads.keys()
     })
 
   def forward(self, x:Tensor, head:str) -> Tensor:
@@ -121,8 +121,10 @@ class LitModel(LightningModule):
     self.is_ldl = None
     self.freeze_modules: List[str] = []
     self.lr_list: List[float] = [1e-6, 1e-4, 2e-4, 2e-4]
-    self.acc = None
-    self.mse = None
+    self.acc_train = None
+    self.acc_valid = None
+    self.mse_train = None
+    self.mse_valid = None
 
   def setup_train_args(self, args, n_class:int):
     self.args = args
@@ -135,8 +137,12 @@ class LitModel(LightningModule):
       if len(lr_list) == 1: lr_list *= len(self.lr_list)
       assert len(lr_list) == len(self.lr_list)
       self.lr_list = lr_list
-    self.acc = MulticlassAccuracy(n_class)
-    self.mse = MeanSquaredError()
+    if self.is_clf:
+      self.acc_train = MulticlassAccuracy(n_class)
+      self.acc_valid = MulticlassAccuracy(n_class)
+    else:
+      self.mse_train = MeanSquaredError()
+      self.mse_valid = MeanSquaredError()
 
   def configure_optimizers(self) -> Optimizer:
     param_groups = [
@@ -150,58 +156,52 @@ class LitModel(LightningModule):
   def optimizer_step(self, epoch:int, batch_idx:int, optim:Optimizer, optim_closure:Callable):
     super().optimizer_step(epoch, batch_idx, optim, optim_closure)
     if batch_idx % 10 == 0:
-      self.log_dict({f'lr-{i}': group['lr'] for i, group in enumerate(optim.param_groups)})
+      self.log_dict({f'lr/group-{i}': group['lr'] for i, group in enumerate(optim.param_groups)})
 
-  def get_losses(self, batch:Tuple[Tensor], batch_idx:int) -> Tuple[Tensor, Dict[str, float]]:
+  def forward_step(self, batch:Tuple[Tensor], prefix:str) -> Tensor:
+    is_train = prefix == 'train'
     x, y = batch
     out, fvec, invfvec = self.model(x, self.head)
+
     if self.is_clf:
       loss_clf = F.cross_entropy(out, y)
       loss_ldl = F.kl_div(F.log_softmax(out, dim=-1), y, reduction='batchmean') if self.is_ldl else 0.0
       loss_task = loss_clf + loss_ldl * self.args.loss_w_ldl
+      if is_train:
+        self.acc_train(out, y)
+        self.log('train/acc', self.acc_train, on_step=True, on_epoch=True)
+      else:
+        self.acc_valid(out, y)
+        self.log('valid/acc', self.acc_valid, on_step=False, on_epoch=True)
     else:
       loss_task = F.mse_loss(out, y)
+      if is_train:
+        self.mse_train(out, y)
+        self.log('train/mse', self.mse_train, on_step=True, on_epoch=True)
+      else:
+        self.mse_valid(out, y)
+        self.log('valid/mse', self.mse_valid, on_step=False, on_epoch=True)
+
     loss_recon = F.mse_loss(invfvec, fvec)
     loss: Tensor = loss_task + loss_recon * self.args.loss_w_recon
 
-    if batch_idx % 10 == 0:
-      with torch.no_grad():
-        _ = self.acc(out, y) if self.is_clf else self.mse(out, y)
-        log_dict = {
-          'l_clf': locals().get('loss_clf').item() if locals().get('loss_clf') else None,
-          'l_ldl': locals().get('loss_ldl').item() if locals().get('loss_ldl') else None,
-          'l_task': loss_task.item(),
-          'l_rec': loss_recon.item(),
-          'l_total': loss.item(),
-        }
-        log_dict = {k: v for k, v in log_dict.items() if v is not None}
-    else: log_dict = None
-    return loss, log_dict
-
-  def on_train_epoch_end(self) -> None:
-    if self.is_clf:
-      self.log('train/acc/epoch', self.acc, on_step=False, on_epoch=True)
-    else:
-      self.log('train/mse/epoch', self.mse, on_step=False, on_epoch=True)
-
-  def on_validation_epoch_end(self) -> None:
-    if self.is_clf:
-      self.log('valid/acc/epoch', self.acc, on_step=False, on_epoch=True)
-    else:
-      self.log('valid/mse/epoch', self.mse, on_step=False, on_epoch=True)
-
-  def log_losses(self, log_dict:Dict[str, float], prefix:str='log'):
-    self.log_dict({f'{prefix}/{k}': v for k, v in log_dict.items()})
+    with torch.no_grad():
+      log_dict = {
+        'l_clf': locals().get('loss_clf').item() if locals().get('loss_clf') else None,
+        'l_ldl': locals().get('loss_ldl').item() if locals().get('loss_ldl') else None,
+        'l_task': loss_task.item(),
+        'l_rec': loss_recon.item(),
+        'l_total': loss.item(),
+      }
+      log_dict = {k: v for k, v in log_dict.items() if v is not None}
+      self.log_dict({f'{prefix}/{k}': v for k, v in log_dict.items()})
+    return loss
 
   def training_step(self, batch:Tuple[Tensor], batch_idx:int) -> Tensor:
-    loss, log_dict = self.get_losses(batch, batch_idx)
-    if log_dict: self.log_losses(log_dict, 'train')
-    return loss
+    return self.forward_step(batch, 'train')
 
   def validation_step(self, batch:Tuple[Tensor], batch_idx:int) -> Tensor:
-    loss, log_dict = self.get_losses(batch, batch_idx)
-    if log_dict: self.log_losses(log_dict, 'valid')
-    return loss
+    return self.forward_step(batch, 'valid')
 
 
 def train(args):
@@ -216,8 +216,8 @@ def train(args):
     'persistent_workers': False,
     'pin_memory': True,
   }
-  trainloader = DataLoader(dataset_cls('train'), args.batch_size, shuffle=True,  **dataloader_kwargs)
-  validloader = DataLoader(dataset_cls('valid'), batch_size=1,    shuffle=False, **dataloader_kwargs)
+  trainloader = DataLoader(dataset_cls('train'), args.batch_size, shuffle=True,  drop_last=True,  **dataloader_kwargs)
+  validloader = DataLoader(dataset_cls('valid'), batch_size=1,    shuffle=False, drop_last=False, **dataloader_kwargs)
   n_class = trainloader.dataset.n_class
 
   ''' Model & Optim '''
