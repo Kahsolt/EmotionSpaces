@@ -29,6 +29,14 @@ HEAD_DIMS = {
   'VA':     2,
   'Polar':  2,
 }
+HEAD_DIMS_NAMES = {
+  # 'head_type': [name: str]
+  'Mikels': EmoSet.class_names,
+  'EkmanN': Emotion6Dim7.class_names,
+  'Ekman':  Emotion6Dim6.class_names,
+  'VA':     Emotion6VA.class_names,
+  'Polar':  TweeterI.class_names,
+}
 HEAD_DATASET_CONFIGS = {
   # 'head_type': {'dataset_cls': is_ldl}
   'Mikels': {
@@ -55,6 +63,7 @@ HEAD_DATASET_CONFIGS = {
   }
 }
 DATASET_TO_HEAD_TYPE = {ds: head for head, ds_cfgs in HEAD_DATASET_CONFIGS.items() for ds in ds_cfgs}
+HEADS = list(HEAD_DIMS.keys())
 DATASETS = list(DATASET_TO_HEAD_TYPE.keys())
 
 

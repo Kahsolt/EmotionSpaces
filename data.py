@@ -111,7 +111,8 @@ class ArtPhoto(Dataset):
 
 class TweeterI(Dataset):
   
-  pass
+  root = DATA_TWEETERI_PATH
+  class_names = ['neg', 'pos']
 
 class FI(Dataset):
   
