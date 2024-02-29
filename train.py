@@ -168,19 +168,20 @@ class LitModel(LightningModule):
       self.log_dict({f'lr/group-{i}': group['lr'] for i, group in enumerate(optim.param_groups)})
 
   def forward_step(self, batch:Tuple[Tensor], prefix:str) -> Tensor:
-    is_train = prefix == 'train'
     x, y = batch
+    y_lbl = torch.argmax(y, dim=-1) if self.is_ldl else y
     out, fvec, invfvec = self.model(x, self.head)
 
+    is_train = prefix == 'train'
     if self.is_clf:
-      loss_clf = F.cross_entropy(out, y)
+      loss_clf = F.cross_entropy(out, y_lbl)
       loss_ldl = F.kl_div(F.log_softmax(out, dim=-1), y, reduction='batchmean') if self.is_ldl else 0.0
       loss_task = loss_clf + loss_ldl * self.args.loss_w_ldl
       if is_train:
-        self.acc_train(out, y)
+        self.acc_train(out, y_lbl)
         self.log('train/acc', self.acc_train, on_step=True, on_epoch=True)
       else:
-        self.acc_valid(out, y)
+        self.acc_valid(out, y_lbl)
         self.log('valid/acc', self.acc_valid, on_step=False, on_epoch=True)
     else:
       loss_task = F.mse_loss(out, y)

@@ -71,7 +71,7 @@ class Emotion6Dim7(Emotion6):
   def __getitem__(self, idx:int):
     img = self.get_img(idx)
     row = self.meta(idx)
-    prob = np.asarray(row[3:9], dtype=np.float32)
+    prob = np.asarray(row[3:10], dtype=np.float32)
     return img, prob
 
 class Emotion6Dim6(Emotion6):
@@ -81,7 +81,7 @@ class Emotion6Dim6(Emotion6):
   def __getitem__(self, idx:int):
     img = self.get_img(idx)
     row = self.meta(idx)
-    prob = np.asarray(row[3:8], dtype=np.float32)
+    prob = np.asarray(row[3:9], dtype=np.float32)
     prob /= prob.sum()    # re-norm to 1
     return img, prob
 
