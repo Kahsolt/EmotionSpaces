@@ -14,6 +14,7 @@ import numpy as np
 from numpy import ndarray
 from numpy.typing import NDArray
 
+torch.set_float32_matmul_precision('medium')
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 BASE_PATH = Path(__file__).parent

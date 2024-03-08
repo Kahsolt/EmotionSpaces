@@ -11,6 +11,14 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 EX_BIAS = ['(bias)']
+HEAD_DIMS_NAMES = {
+  # 'head_type': [name: str]
+  'Mikels': EmoSet.class_names,
+  'EkmanN': Emotion6Dim7.class_names,
+  'Ekman':  Emotion6Dim6.class_names,
+  'VA':     Emotion6VA.class_names,
+  'Polar':  TweeterI.class_names,
+}
 
 
 def get_w_and_b(layer:Linear) -> Tuple[ndarray, ndarray]:

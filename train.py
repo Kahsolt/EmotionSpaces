@@ -11,32 +11,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import Optimizer, SGD, Adam
-from torchvision.models.resnet import resnet50, ResNet50_Weights
+from torchvision.models.resnet import *
 from lightning import LightningModule, Trainer, seed_everything
 from torchmetrics.regression import MeanSquaredError
 from torchmetrics.classification import MulticlassAccuracy
 
-torch.set_float32_matmul_precision('medium')
-
 from data import *
+from model import *
 from utils import *
 
-HEAD_DIMS = {
-  # 'head_type': dim
-  'Mikels': 8,
-  'EkmanN': 7,
-  'Ekman':  6,
-  'VA':     2,
-  'Polar':  2,
-}
-HEAD_DIMS_NAMES = {
-  # 'head_type': [name: str]
-  'Mikels': EmoSet.class_names,
-  'EkmanN': Emotion6Dim7.class_names,
-  'Ekman':  Emotion6Dim6.class_names,
-  'VA':     Emotion6VA.class_names,
-  'Polar':  TweeterI.class_names,
-}
 HEAD_DATASET_CONFIGS = {
   # 'head_type': {'dataset_cls': is_ldl}
   'Mikels': {
@@ -63,59 +46,7 @@ HEAD_DATASET_CONFIGS = {
   }
 }
 DATASET_TO_HEAD_TYPE = {ds: head for head, ds_cfgs in HEAD_DATASET_CONFIGS.items() for ds in ds_cfgs}
-HEADS = list(HEAD_DIMS.keys())
 DATASETS = list(DATASET_TO_HEAD_TYPE.keys())
-
-
-class MultiTaskResNet(nn.Module):
-
-  def __init__(self, d_x:int=32, pretrain:bool=False):
-    super().__init__()
-
-    # 交换空间的向量深度
-    print('d_x:', d_x)
-    # 预训练的ResNet模型
-    model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1 if pretrain else None)
-    # features部分保持不变
-    self.fvecs = nn.Sequential(
-      model.conv1,
-      model.bn1,
-      model.relu,
-      model.maxpool,
-      model.layer1,
-      model.layer2,
-      model.layer3,
-      model.layer4,   # [B, C=2048, H//32, W//32]
-      model.avgpool,  # [B, C=2048, 1, 1]
-      nn.Flatten(1),  # [B, D=2048]
-    )
-    del model
-    # 将fc部分改造为降维MLP
-    self.proj = nn.Sequential(
-      nn.Linear(2048, 256), # [B, D=256]
-      nn.SiLU(),
-      nn.Linear(256, d_x),  # [B, D=32]
-    )
-    # 各下游任务使用不同的线性投影/逆投影
-    self.heads = nn.ModuleDict({
-      name: nn.Linear(d_x, d_out) for name, d_out in HEAD_DIMS.items()
-    })
-    self.invheads = nn.ModuleDict({
-      name: nn.Linear(HEAD_DIMS[name], d_x) for name in self.heads.keys()
-    })
-
-  def forward(self, x:Tensor, head:str) -> Tensor:
-    fmap = self.fvecs(x)
-    fv = self.proj(fmap)
-    o = self.heads[head](fv)
-    ifv = self.invheads[head](o)
-    return o, fv, ifv
-
-  def infer(self, x:Tensor, head:str) -> Tensor:
-    fmap = self.fvecs(x)
-    fv = self.proj(fmap)
-    o = self.heads[head](fv)
-    return o
 
 
 class LitModel(LightningModule):
@@ -231,7 +162,7 @@ def train(args):
   n_class = trainloader.dataset.n_class
 
   ''' Model & Optim '''
-  model = MultiTaskResNet(pretrain=True)
+  model = MultiTaskResNet(args.model, args.d_x, args.head, pretrain=args.load is None)
   lit = LitModel(model)
   if args.load:
     lit = LitModel.load_from_checkpoint(args.load, model=model)
@@ -249,7 +180,10 @@ def train(args):
 
 if __name__ == '__main__':
   parser = ArgumentParser()
-  parser.add_argument('-L', '--load',   type=Path, help='load pretrained weights')
+  parser.add_argument('-L', '--load',  type=Path, help='load pretrained weights')
+  parser.add_argument('-M', '--model', default='resnet50', choices=['resnet50', 'resnet101'])
+  parser.add_argument('-H', '--head', default='linear', choices=['linear', 'mlp'])
+  parser.add_argument('-X', '--d_x', default=32, type=int, help='Xspace dim')
   parser.add_argument('-D', '--dataset', required=True, choices=DATASETS)
   parser.add_argument('-B', '--batch_size', type=int, default=32)
   parser.add_argument('-E', '--epochs',     type=int, default=10)
