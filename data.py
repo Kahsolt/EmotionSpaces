@@ -3,6 +3,7 @@
 # Create Time: 2023/12/27
 
 import json
+from enum import Enum
 import pandas as pd
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as T
@@ -25,7 +26,7 @@ IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD  = (0.229, 0.224, 0.225)
 
 transform_train = T.Compose([
-  T.RandomResizedCrop(RESIZE, scale=(0.8, 1), interpolation=T.InterpolationMode.BILINEAR),
+  T.RandomResizedCrop(RESIZE, scale=(1/3, 1), interpolation=T.InterpolationMode.BILINEAR),
   T.RandomHorizontalFlip(),
   T.ToTensor(),
   T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
@@ -35,122 +36,83 @@ transform_test = T.Compose([
   T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
 ])
 
+LABELS_MIKELS  = ['anger', 'disgust', 'fear', 'amusement', 'sadness', 'excitement', 'contentment', 'awe']
+LABELS_EKMAN   = ['anger', 'disgust', 'fear', 'joy', 'sadness', 'surprise']
+LABELS_EKMAN_N = ['anger', 'disgust', 'fear', 'joy', 'sadness', 'surprise', 'neutral']
+LABELS_VA      = ['valence', 'arousal']
+LABELS_POLAR   = ['neg', 'pos']
 
-''' Emotion6 '''
+class HeadType(Enum):
 
-class Emotion6(Dataset):
+  Mikels = 'Mikels'
+  Ekman = 'Ekman'
+  EkmanN = 'EkmanN'
+  VA = 'VA'
+  Polar = 'Polar'
 
-  root = DATA_EMOTION6_PATH
-  class_names = []
+HEAD_CLASS_NAMES = {
+  # 'head_type': dim
+  'Mikels': LABELS_MIKELS,   # 8
+  'EkmanN': LABELS_EKMAN,    # 7
+  'Ekman':  LABELS_EKMAN_N,  # 6
+  'VA':     LABELS_VA,       # 2
+  'Polar':  LABELS_POLAR,    # 2
+}
+HEAD_DIMS = { k: len(v) for k, v in HEAD_CLASS_NAMES.items() }
+
+
+def split_dataset(metadata:list, split:str='train', split_ratio:float=0.2) -> Tuple[list, list]:
+  import random
+  random.seed(114514)
+  random.shuffle(metadata)
+  cp = int(len(metadata) * split_ratio)
+  return metadata[cp:] if split == 'train' else metadata[:cp]
+
+
+''' Base '''
+
+class BaseDataset(Dataset):
+
+  root: Path = None
+  head: HeadType = None
+  is_ldl: bool = False
 
   def __init__(self, split:str='train'):
+    assert split in ['train', 'valid', 'test']
     self.split = split
     self.transform = transform_train if split == 'train' else transform_test
-    self.metadata = pd.read_csv(self.root / 'ground_truth.txt', sep='\t')
+    self._metadata = []
 
   @property
   def n_class(self):
-    return len(self.class_names)
+    return HEAD_DIMS[self.head.value]
+
+  @property
+  def class_names(self):
+    return HEAD_CLASS_NAMES[self.head.value]
+  
+  @property
+  def metadata(self):
+    return self._metadata
 
   def __len__(self):
     return len(self.metadata)
 
-  def meta(self, idx:int):
-    return self.metadata.iloc[idx].tolist()
 
-  def get_img(self, idx:int) -> Tensor:
-    row = self.meta(idx)
-    img = load_pil(self.root / 'images' / row[0])
-    img = self.transform(img)
-    return img
+''' EmoSet '''
 
-class Emotion6Dim7(Emotion6):
-
-  class_names = ['anger', 'disgust', 'fear', 'joy', 'sadness', 'surprise', 'neutral']
-
-  def __getitem__(self, idx:int):
-    img = self.get_img(idx)
-    row = self.meta(idx)
-    prob = np.asarray(row[3:10], dtype=np.float32)
-    return img, prob
-
-class Emotion6Dim6(Emotion6):
-
-  class_names = ['anger', 'disgust', 'fear', 'joy', 'sadness', 'surprise']
-
-  def __getitem__(self, idx:int):
-    img = self.get_img(idx)
-    row = self.meta(idx)
-    prob = np.asarray(row[3:9], dtype=np.float32)
-    prob /= prob.sum()    # re-norm to 1
-    return img, prob
-
-class Emotion6VA(Emotion6):
-
-  class_names = ['valence', 'arouse']
-
-  def __getitem__(self, idx:int):
-    img = self.get_img(idx)
-    row = self.meta(idx)
-    prob = np.asarray(row[1:3], dtype=np.float32)
-    return img, prob
-
-
-''' Abstract & ArtPhoto '''
-
-class Abstract(Dataset):
-
-  pass
-
-class ArtPhoto(Dataset):
-
-  pass
-
-
-''' Tweeter-I & FI-23k (Flickr-Instagram) '''
-
-class TweeterI(Dataset):
-  
-  root = DATA_TWEETERI_PATH
-  class_names = ['neg', 'pos']
-
-class FI(Dataset):
-  
-  pass
-
-
-''' others '''
-
-class GAPED(Dataset):
-  
-  pass
-
-class OASIS(Dataset):
-  
-  pass
-
-class FER2013(Dataset):
-  
-  pass
-
-class EmoSet(Dataset):
+class EmoSet(BaseDataset):
 
   root = DATA_EMOSET_PATH
-  class_names = ['anger', 'disgust', 'fear', 'amusement', 'sadness', 'excitement', 'contentment', 'awe']
+  head = HeadType.Mikels
 
   def __init__(self, split:str='train'):
-    if split == 'valid': split = 'val'
-    assert split in ['train', 'val', 'test']
-    self.transform = transform_train if split == 'train' else transform_test
-    with open(self.root / f'{split}.json', 'r', encoding='utf-8') as fh:
-      self.metadata = json.load(fh)
+    super().__init__(split)
 
-  @property
-  def n_class(self):
-    return len(self.class_names)
-
-  def __len__(self):
-    return len(self.metadata)
+    if self.split == 'valid': self.split = 'val'
+    assert self.split in ['train', 'val', 'test']
+    with open(self.root / f'{self.split}.json', 'r', encoding='utf-8') as fh:
+      self._metadata = json.load(fh)
 
   def __getitem__(self, idx:int):
     lbl, rfp, annot = self.metadata[idx]
@@ -159,10 +121,168 @@ class EmoSet(Dataset):
     return img, self.class_names.index(lbl)
 
 
+''' Emotion6 '''
+
+class Emotion6BaseDataset(BaseDataset):
+
+  root = DATA_EMOTION6_PATH
+
+  def __init__(self, split:str='train', split_ratio:float=0.2):
+    super().__init__(split)
+
+    df = pd.read_csv(self.root / 'ground_truth.txt', sep='\t').to_numpy()
+    X, Y = df[:, 0], df[:, 1:]
+    self._metadata = split_dataset([(x, y) for x, y in zip(X, Y)], split, split_ratio)
+
+  def get_img(self, idx:int) -> Tensor:
+    fn, _ = self.metadata[idx]
+    img = load_pil(self.root / 'images' / fn)
+    img = self.transform(img)
+    return img
+
+class Emotion6Dim7(Emotion6BaseDataset):
+
+  head = HeadType.EkmanN
+  is_ldl = True
+
+  def __getitem__(self, idx:int):
+    img = self.get_img(idx)
+    _, vals = self.metadata[idx]
+    prob = np.asarray(vals[2:], dtype=np.float32)
+    return img, prob
+
+class Emotion6Dim6(Emotion6BaseDataset):
+
+  head = HeadType.Ekman
+  is_ldl = True
+
+  def __getitem__(self, idx:int):
+    img = self.get_img(idx)
+    _, vals = self.metadata[idx]
+    prob = np.asarray(vals[2:8], dtype=np.float32)
+    prob /= prob.sum()    # re-norm to 1
+    return img, prob
+
+class Emotion6VA(Emotion6BaseDataset):
+
+  head = HeadType.VA
+
+  def __getitem__(self, idx:int):
+    img = self.get_img(idx)
+    _, vals = self.metadata[idx]
+    vals = np.asarray(vals[:2], dtype=np.float32)
+    return img, vals
+
+
+''' Abstract & ArtPhoto '''
+
+class Abstract(BaseDataset):
+
+  root = DATA_ABSTRACT_PATH
+  head = HeadType.Mikels
+  is_ldl = True
+
+  def __init__(self, split:str='train', split_ratio:float=0.2):
+    super().__init__(split)
+
+    original_class_names = ['Amusement', 'Anger', 'Awe', 'Content', 'Disgust', 'Excitement', 'Fear', 'Sad']
+    tmp_class_names = [e.lower().replace('content', 'contentment').replace('sad', 'sadness') for e in original_class_names]
+
+    df = pd.read_csv(self.root / 'ABSTRACT_groundTruth.csv').to_numpy()
+    X, Y = df[:, 0], df[:, 1:]
+    X = [fn.strip("'") for fn in X]
+    Y = Y[:, [tmp_class_names.index(e) for e in self.class_names]]  # re-order for mapping
+    Y /= Y.sum(axis=-1, keepdims=True)  # freq to prob
+    self._metadata = split_dataset([(x, y) for x, y in zip(X, Y)], split, split_ratio)
+
+  def __getitem__(self, idx:int) -> int:
+    fn, prob = self.metadata[idx]
+    img = load_pil(self.root / fn)
+    img = self.transform(img)
+    return img, prob
+
+class ArtPhoto(BaseDataset):
+
+  root = DATA_ARTPHOTO_PATH
+  head = HeadType.Mikels
+
+  def __init__(self, split:str='train', split_ratio:float=0.2):
+    super().__init__(split)
+
+    X = [fp.name for fp in self.root.iterdir() if fp.suffix == '.jpg']
+    Y = [self.class_names.index(x.split('_')[0].replace('sad', 'sadness')) for x in X]
+    self._metadata = split_dataset([(x, y) for x, y in zip(X, Y)], split, split_ratio)
+
+  def __getitem__(self, idx:int) -> int:
+    fn, lbl = self.metadata[idx]
+    img = load_pil(self.root / fn)
+    img = self.transform(img)
+    return img, lbl
+
+
+''' Tweeter-I & FI-23k (Flickr-Instagram) '''
+
+class TweeterI(BaseDataset):
+
+  root = DATA_TWEETERI_PATH
+  head = HeadType.VA
+
+  def __init__(self, split:str='train', split_ratio:float=0.2):
+    super().__init__(split)
+
+    df = pd.read_csv(self.root / 'amt_result.csv').to_numpy()
+    X = df[:, 0]
+    Y = np.stack([df[:, 2] / df[:, 1], df[:, 3] / df[:, 1]], axis=-1)
+    self._metadata = split_dataset([(x, y) for x, y in zip(X, Y)], split, split_ratio)
+
+  def __getitem__(self, idx:int) -> int:
+    fn, prob = self.metadata[idx]
+    img = load_pil(self.root / 'Agg_AMT_Candidates' / fn)
+    img = self.transform(img)
+    return img, prob
+
+class FI(BaseDataset):
+
+  pass
+
+
+''' others '''
+
+class GAPED(BaseDataset):
+
+  root = DATA_GAPED_PATH
+
+class OASIS(BaseDataset):
+
+  root = DATA_OASIS_PATH
+
+class FER2013(BaseDataset):
+  
+  root = DATA_FER_PATH
+
+
 if __name__ == '__main__':
-  #dataset = Emotion6Dim6()
-  dataset = EmoSet()
-  for img, label in iter(dataset):
-    print('x:', img, 'y:', label)
-    print(np.sum(label))
-    break
+  keys = list(globals().keys())
+  for k in keys:
+    v = globals()[k]
+    if v in [BaseDataset, Emotion6BaseDataset]: continue
+    if not type(v) == type(BaseDataset): continue
+    if not issubclass(v, BaseDataset): continue
+
+    try:
+      dataset: BaseDataset = v('valid')
+      print(f'>> [{k}] len={len(dataset)} ({dataset.head.value})')
+      for x, y in iter(dataset):
+        print(f'  x.shape: {tuple(x.shape)}')
+        if isinstance(y, int):
+          print(f'  y: {y}')
+        elif isinstance(y, ndarray):
+          print(f'  y.shape: {tuple(y.shape)}' if isinstance(y, ndarray) else f'  y: {y}')
+          print(f'  y: {[round(e, 4) for e in y]}, sum: {sum(y):.4f}')
+        else: raise TypeError(type(y))
+        break
+      print()
+    except:
+      #from traceback import print_exc
+      #print_exc()
+      print(f'>> [{k}] failed!')

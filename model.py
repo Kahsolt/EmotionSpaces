@@ -7,18 +7,13 @@ import torch.nn as nn
 from torch import Tensor
 from torchvision.models.resnet import *
 
-HEAD_DIMS = {
-  # 'head_type': dim
-  'Mikels': 8,
-  'EkmanN': 7,
-  'Ekman':  6,
-  'VA':     2,
-  'Polar':  2,
-}
+from data import HEAD_DIMS
+
 MODELS_TO_WEIGHTS = {
   'resnet50': ResNet50_Weights.IMAGENET1K_V1,
   'resnet101': ResNet101_Weights.IMAGENET1K_V1,
 }
+
 
 class HeadLinear(nn.Module):
   

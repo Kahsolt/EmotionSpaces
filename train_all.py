@@ -1,50 +1,26 @@
 #!/usr/bin/env python3
 # Author: Armit
-# Create Time: 2023/08/16
+# Create Time: 2024/03/08
 
-import sys
-from argparse import ArgumentParser
-
-from torch.optim import Optimizer, SGD, Adam
-from torchvision.models.resnet import *
-from lightning import LightningModule, Trainer, seed_everything
-from torchmetrics.regression import MeanSquaredError
-from torchmetrics.classification import MulticlassAccuracy
-
-from data import *
-from model import *
-from utils import *
-
-HEAD_DATASET_CONFIGS = {
-  # 'head_type': {'dataset_cls': is_ldl}
-  'Mikels': {
-    'EmoSet': False,
-    'FI': False,
-    'ArtPhoto': False,
-    'Abstract': True,
-  },
-  'EkmanN': {
-    'Emotion6Dim7': True,
-    'FER2013': False,
-  },
-  'Ekman': {
-    'Emotion6Dim6': True,
-    'FER2013': False,
-  },
-  'VA': {
-    'Emotion6VA': False,
-    'OASIS': False,
-    'GAPED': False,
-  },
-  'Polar': {
-    'TweeterI': True,
-  }
-}
-DATASET_TO_HEAD_TYPE = {ds: head for head, ds_cfgs in HEAD_DATASET_CONFIGS.items() for ds in ds_cfgs}
-DATASETS = list(DATASET_TO_HEAD_TYPE.keys())
+from train import *
 
 
-class LitModel(LightningModule):
+class MixedDataset(Dataset):
+
+  def __init__(self, cls_names:List[str], split:str):
+    super().__init__()
+
+    self.datasets = [globals()[name](split) for name in cls_names]
+    self.lens = [len(ds) for ds in self.datasets]
+
+  def __len__(self) -> int:
+    return sum(self.lens)
+
+  def __getitem__(self, idx:int):
+    return sum(self.lens)
+
+
+class MixedLitModel(LightningModule):
 
   def __init__(self, model:MultiTaskResNet):
     super().__init__()
@@ -54,13 +30,13 @@ class LitModel(LightningModule):
     self.args = None
     self.head = None
     self.is_ldl = None
-    self.lr_list: List[float] = [1e-6, 1e-4, 2e-4]
+    self.lr_list: List[float] = [1e-6, 1e-4, 2e-4, 2e-4]
     self.acc_train = None
     self.acc_valid = None
     self.mse_train = None
     self.mse_valid = None
 
-  def setup_train_args(self, args, n_class:int):
+  def setup_train_args(self, args):
     self.args = args
     self.head = DATASET_TO_HEAD_TYPE[args.dataset]
     self.is_clf = self.head not in ['VA']
@@ -72,8 +48,8 @@ class LitModel(LightningModule):
       assert len(lr_list) == len(self.lr_list)
       self.lr_list = lr_list
     if self.is_clf:
-      self.acc_train = MulticlassAccuracy(n_class)
-      self.acc_valid = MulticlassAccuracy(n_class)
+      self.acc_train = MulticlassAccuracy(HEAD_DIMS[self.head])
+      self.acc_valid = MulticlassAccuracy(HEAD_DIMS[self.head])
     else:
       self.mse_train = MeanSquaredError()
       self.mse_valid = MeanSquaredError()
@@ -83,7 +59,7 @@ class LitModel(LightningModule):
       {'params': self.model.fvecs   .parameters(), 'lr': self.lr_list[0]},
       {'params': self.model.proj    .parameters(), 'lr': self.lr_list[1]},
       {'params': self.model.heads   .parameters(), 'lr': self.lr_list[2]},
-      {'params': self.model.invheads.parameters(), 'lr': self.lr_list[2]},
+      {'params': self.model.invheads.parameters(), 'lr': self.lr_list[3]},
     ]
     return Adam([it for it in param_groups if it['lr'] > 0], weight_decay=1e-5)
 
@@ -145,52 +121,38 @@ def train(args):
   print('>> args:', vars(args))
 
   ''' Data '''
-  assert args.dataset, 'must provide --dataset'
-  dataset_cls: Callable[[Any], Dataset] = globals()[args.dataset]
   dataloader_kwargs = {
     'num_workers': 0,
     'persistent_workers': False,
     'pin_memory': True,
   }
-  trainloader = DataLoader(dataset_cls('train'), args.batch_size, shuffle=True,  drop_last=True,  **dataloader_kwargs)
-  validloader = DataLoader(dataset_cls('valid'), batch_size=1,    shuffle=False, drop_last=False, **dataloader_kwargs)
-  n_class = trainloader.dataset.n_class
+  trainloader = DataLoader(MixedDataset('train'), args.batch_size, shuffle=True,  drop_last=True,  **dataloader_kwargs)
+  validloader = DataLoader(MixedDataset('valid'), batch_size=1,    shuffle=False, drop_last=False, **dataloader_kwargs)
 
   ''' Model & Optim '''
   model = MultiTaskResNet(args.model, args.d_x, args.head, pretrain=args.load is None)
-  lit = LitModel(model)
+  lit = MixedLitModel(model)
   if args.load:
-    lit = LitModel.load_from_checkpoint(args.load, model=model)
-  lit.setup_train_args(args, n_class)
+    lit = MixedLitModel.load_from_checkpoint(args.load, model=model)
+  lit.setup_train_args(args)
 
   ''' Train '''
+  n_datasets = len(args.dataset)
   trainer = Trainer(
     max_epochs=args.epochs,
     precision='16-mixed',
     benchmark=True,
     enable_checkpointing=True,
+    accumulate_grad_batches=n_datasets,  # 每个子数据集轮流贡献一个batch
+    limit_train_batches=n_datasets*200,
+    limit_val_batches=n_datasets*10,
   )
   trainer.fit(lit, trainloader, validloader)
 
 
-def get_parser():
-  parser = ArgumentParser()
-  parser.add_argument('-L', '--load',  type=Path, help='load pretrained weights')
-  parser.add_argument('-M', '--model', default='resnet50', choices=['resnet50', 'resnet101'])
-  parser.add_argument('-H', '--head', default='linear', choices=['linear', 'mlp'])
-  parser.add_argument('-X', '--d_x', default=32, type=int, help='Xspace dim')
-  parser.add_argument('-B', '--batch_size', type=int, default=32)
-  parser.add_argument('-E', '--epochs',     type=int, default=10)
-  parser.add_argument('-lr', '--lr_list', nargs='+', type=eval, default=2e-4, help='lr list for each part: fvecs/proj/heads/invheads')
-  parser.add_argument('--loss_w_ldl',   type=float, default=1,  help='loss weight for ldl (kl_div loss)')
-  parser.add_argument('--loss_w_recon', type=float, default=10, help='loss weight for x-space reconstruction')
-  parser.add_argument('--seed', type=int, default=114514)
-  return parser
-
-
 if __name__ == '__main__':
   parser = get_parser()
-  parser.add_argument('-D', '--dataset', default='Emotion6Dim7', choices=DATASETS)
+  parser.add_argument('-D', '--dataset', nargs='+', default=['EmoSet', 'Emotion6Dim7', 'Emotion6Dim6', 'Emotion6VA', 'TweeterI'], choices=DATASETS)
   args = parser.parse_args()
 
   train(args)
