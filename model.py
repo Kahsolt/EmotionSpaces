@@ -62,14 +62,10 @@ class MultiTaskResNet(nn.Module):
       model.avgpool,  # [B, C=2048, 1, 1]
       nn.Flatten(1),  # [B, D=2048]
     )
+    # 将fc部分改造为到交换空间的线性投影
+    self.proj = nn.Linear(model.fc.in_features, d_x)   # 2048 => 32
     del model
-    # 将fc部分改造为降维MLP
-    self.proj = nn.Sequential(
-      nn.Linear(2048, 256), # [B, D=256]
-      nn.SiLU(),
-      nn.Linear(256, d_x),  # [B, D=32]
-    )
-    # 各下游任务使用不同的线性投影/逆投影
+    # 各下游任务使用不同的head/invhead
     head_cls = HeadLinear if head_type == 'linear' else HeadMLP
     self.heads = nn.ModuleDict({
       name: head_cls(d_x, d_out) for name, d_out in HEAD_DIMS.items()

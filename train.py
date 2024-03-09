@@ -8,6 +8,7 @@ from argparse import ArgumentParser
 from torch.optim import Optimizer, SGD, Adam
 from torchvision.models.resnet import *
 from lightning import LightningModule, Trainer, seed_everything
+from lightning.pytorch.callbacks import ModelCheckpoint
 from torchmetrics.regression import MeanSquaredError
 from torchmetrics.classification import MulticlassAccuracy
 
@@ -89,33 +90,27 @@ class LitModel(LightningModule):
 
   def optimizer_step(self, epoch:int, batch_idx:int, optim:Optimizer, optim_closure:Callable):
     super().optimizer_step(epoch, batch_idx, optim, optim_closure)
-    if batch_idx % 10 == 0:
-      self.log_dict({f'lr/group-{i}': group['lr'] for i, group in enumerate(optim.param_groups)})
+    #if batch_idx % 10 == 0:
+    #  self.log_dict({f'lr/group-{i}': group['lr'] for i, group in enumerate(optim.param_groups)})
 
   def forward_step(self, batch:Tuple[Tensor], prefix:str) -> Tensor:
     x, y = batch
-    y_lbl = torch.argmax(y, dim=-1) if self.is_ldl else y
     out, fvec, invfvec = self.model(x, self.head)
 
+    y_lbl = torch.argmax(y, dim=-1) if self.is_ldl else y
     is_train = prefix == 'train'
     if self.is_clf:
       loss_clf = F.cross_entropy(out, y_lbl)
       loss_ldl = F.kl_div(F.log_softmax(out, dim=-1), y, reduction='batchmean') if self.is_ldl else 0.0
       loss_task = loss_clf + loss_ldl * self.args.loss_w_ldl
-      if is_train:
-        self.acc_train(out, y_lbl)
-        self.log('train/acc', self.acc_train, on_step=True, on_epoch=True)
-      else:
-        self.acc_valid(out, y_lbl)
-        self.log('valid/acc', self.acc_valid, on_step=False, on_epoch=True)
+      metric = getattr(self, f'acc_{prefix}')
+      metric(out, y_lbl)
+      self.log(f'{prefix}/acc', metric, on_step=is_train, on_epoch=True)
     else:
       loss_task = F.mse_loss(out, y)
-      if is_train:
-        self.mse_train(out, y)
-        self.log('train/mse', self.mse_train, on_step=True, on_epoch=True)
-      else:
-        self.mse_valid(out, y)
-        self.log('valid/mse', self.mse_valid, on_step=False, on_epoch=True)
+      metric = getattr(self, f'mse_{prefix}')
+      metric(out, y_lbl)
+      self.log(f'{prefix}/mse', metric, on_step=is_train, on_epoch=True)
 
     loss_recon = F.mse_loss(invfvec, fvec)
     loss: Tensor = loss_task + loss_recon * self.args.loss_w_recon
@@ -164,11 +159,15 @@ def train(args):
   lit.setup_train_args(args, n_class)
 
   ''' Train '''
+  metric_name = 'valid/acc' if lit.is_clf else 'valid/mse'
+  metric_mode = 'max' if lit.is_clf else 'min'
+  checkpoint_callback = ModelCheckpoint(monitor=metric_name, mode=metric_mode)
   trainer = Trainer(
     max_epochs=args.epochs,
     precision='16-mixed',
     benchmark=True,
-    enable_checkpointing=True,
+    callbacks=[checkpoint_callback],
+    limit_val_batches=1000,
   )
   trainer.fit(lit, trainloader, validloader)
 

@@ -53,12 +53,13 @@ class HeadType(Enum):
 HEAD_CLASS_NAMES = {
   # 'head_type': dim
   'Mikels': LABELS_MIKELS,   # 8
-  'EkmanN': LABELS_EKMAN,    # 7
-  'Ekman':  LABELS_EKMAN_N,  # 6
+  'EkmanN': LABELS_EKMAN_N,  # 7
+  'Ekman':  LABELS_EKMAN,    # 6
   'VA':     LABELS_VA,       # 2
   'Polar':  LABELS_POLAR,    # 2
 }
 HEAD_DIMS = { k: len(v) for k, v in HEAD_CLASS_NAMES.items() }
+HEAD_NAMES = list(HEAD_DIMS.keys())
 
 
 def split_dataset(metadata:list, split:str='train', split_ratio:float=0.2) -> Tuple[list, list]:
@@ -225,14 +226,15 @@ class ArtPhoto(BaseDataset):
 class TweeterI(BaseDataset):
 
   root = DATA_TWEETERI_PATH
-  head = HeadType.VA
+  head = HeadType.Polar
+  is_ldl = True
 
   def __init__(self, split:str='train', split_ratio:float=0.2):
     super().__init__(split)
 
     df = pd.read_csv(self.root / 'amt_result.csv').to_numpy()
     X = df[:, 0]
-    Y = np.stack([df[:, 2] / df[:, 1], df[:, 3] / df[:, 1]], axis=-1)
+    Y = np.stack([df[:, 2] / df[:, 1], df[:, 3] / df[:, 1]], axis=-1).astype(np.float32)
     self._metadata = split_dataset([(x, y) for x, y in zip(X, Y)], split, split_ratio)
 
   def __getitem__(self, idx:int) -> int:
@@ -270,7 +272,7 @@ if __name__ == '__main__':
     if not issubclass(v, BaseDataset): continue
 
     try:
-      dataset: BaseDataset = v('valid')
+      dataset: BaseDataset = v('train')
       print(f'>> [{k}] len={len(dataset)} ({dataset.head.value})')
       for x, y in iter(dataset):
         print(f'  x.shape: {tuple(x.shape)}')
