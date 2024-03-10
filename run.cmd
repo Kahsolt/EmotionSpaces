@@ -27,5 +27,5 @@ SET DATASETS=EmoSet Emotion6Dim7 Emotion6Dim6 Emotion6VA TweeterI
 REM train on all datasets (non-pretrained weights)
 python train_all.py -M %MODEL% -D %DATASETS% -B 32 -E 100 -lr 0 1e-3 1e-3
 REM refine on all datasets (full weights)
-SET LOAD=lightning_logs\version_2\checkpoints\
-python train_all.py -L %LOAD% -M %MODEL% -D %DATASETS% -B 32 -E 100 -lr 2e-4
+SET LOAD=lightning_logs\version_0\checkpoints\epoch=30-step=6200.ckpt
+python train_all.py -L %LOAD% -M %MODEL% -D %DATASETS% -B 64 -E 100 -lr 1e-3

@@ -11,17 +11,11 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 EX_BIAS = ['(bias)']
-HEAD_DIMS_NAMES = {
-  # 'head_type': [name: str]
-  'Mikels': EmoSet.class_names,
-  'EkmanN': Emotion6Dim7.class_names,
-  'Ekman':  Emotion6Dim6.class_names,
-  'VA':     Emotion6VA.class_names,
-  'Polar':  TweeterI.class_names,
-}
 
 
-def get_w_and_b(layer:Linear) -> Tuple[ndarray, ndarray]:
+def get_w_and_b(head:HeadLinear) -> Tuple[ndarray, ndarray]:
+  assert isinstance(head, HeadLinear), f'>> head must be a HeadLinear, but got: {type(head)}'
+  layer = head.fc
   w = layer.weight.detach().cpu().numpy()   # [d_out, d_in]
   b = layer.bias  .detach().cpu().numpy()   # [d_out]
   return w, b
@@ -68,12 +62,12 @@ def vis_tx_x2h(model:MultiTaskResNet):
       mat_ex2 = expanded_matrix(w2, b2)   # [X, D+1]
 
       xticks = 0.5 + np.arange(X+1), seqnum_label(X) + EX_BIAS
-      yticks = 0.5 + np.arange(D), HEAD_DIMS_NAMES[name]
+      yticks = 0.5 + np.arange(D), HEAD_CLASS_NAMES[name]
       title = f'X-space -> {name}'
       fp = IMG_PATH / f'Xspace-{name}.png'
       savefig(mat_ex1.T, xticks, yticks, title, figsize, fp)
 
-      xticks = 0.5 + np.arange(D+1), HEAD_DIMS_NAMES[name] + EX_BIAS
+      xticks = 0.5 + np.arange(D+1), HEAD_CLASS_NAMES[name] + EX_BIAS
       yticks = 0.5 + np.arange(X), seqnum_label(X)
       title = f'{name} -> X-space'
       fp = IMG_PATH / f'{name}-Xspace.png'
@@ -99,8 +93,8 @@ def vis_tx_h2h(model:MultiTaskResNet):
         b_tx = w2 @ b1 + b2
         mat_ex = expanded_matrix(w_tx, b_tx)  # [D+1, D']
 
-        xticks = 0.5 + np.arange(mat_ex.shape[1]), HEAD_DIMS_NAMES[src] + EX_BIAS
-        yticks = 0.5 + np.arange(mat_ex.shape[0]), HEAD_DIMS_NAMES[dst]
+        xticks = 0.5 + np.arange(mat_ex.shape[1]), HEAD_CLASS_NAMES[src] + EX_BIAS
+        yticks = 0.5 + np.arange(mat_ex.shape[0]), HEAD_CLASS_NAMES[dst]
         title = f'{src} -> {dst}'
         fp = IMG_PATH / f'{src}-{dst}.png'
         savefig(mat_ex.T, xticks, yticks, title, figsize, fp)
