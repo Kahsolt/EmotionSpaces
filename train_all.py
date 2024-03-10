@@ -138,7 +138,7 @@ def train(args):
     'pin_memory': True,
   }
   trainloader = DataLoader(MixedDataset(args.dataset, 'train', args.n_batch_train, args.batch_size), args.batch_size, shuffle=False, drop_last=True,  **dataloader_kwargs)
-  validloader = DataLoader(MixedDataset(args.dataset, 'valid', args.n_batch_valid, batch_size=1   ), batch_size=1,    shuffle=False, drop_last=False, **dataloader_kwargs)
+  validloader = DataLoader(MixedDataset(args.dataset, 'valid', args.n_batch_valid, args.batch_size), args.batch_size, shuffle=False, drop_last=False, **dataloader_kwargs)
 
   ''' Model & Optim '''
   model = MultiTaskResNet(args.model, args.d_x, args.head, pretrain=args.load is None)
@@ -166,7 +166,7 @@ if __name__ == '__main__':
   parser = get_parser()
   parser.add_argument('-D', '--dataset', nargs='+', default=['EmoSet', 'Emotion6Dim7', 'Emotion6Dim6', 'Emotion6VA', 'TweeterI'], choices=DATASETS)
   parser.add_argument('--n_batch_train', default=200, type=int, help='limit n_batch for each trainset')
-  parser.add_argument('--n_batch_valid', default=100, type=int, help='limit n_batch for each validset')
+  parser.add_argument('--n_batch_valid', default=10,  type=int, help='limit n_batch for each validset')
   args = parser.parse_args()
 
   train(args)

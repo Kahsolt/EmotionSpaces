@@ -25,13 +25,16 @@ RESIZE = (224, 224)
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD  = (0.229, 0.224, 0.225)
 
+# Just follow EmoSet: https://github.com/JingyuanYY/EmoSet/blob/main/EmoSet.py#L58
 transform_train = T.Compose([
-  T.RandomResizedCrop(RESIZE, scale=(1/3, 1), interpolation=T.InterpolationMode.BILINEAR),
+  T.RandomResizedCrop(RESIZE),
   T.RandomHorizontalFlip(),
   T.ToTensor(),
   T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
 ])
 transform_test = T.Compose([
+  T.Resize(RESIZE),
+  T.CenterCrop(RESIZE),
   T.ToTensor(),
   T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
 ])

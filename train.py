@@ -148,7 +148,7 @@ def train(args):
     'pin_memory': True,
   }
   trainloader = DataLoader(dataset_cls('train'), args.batch_size, shuffle=True,  drop_last=True,  **dataloader_kwargs)
-  validloader = DataLoader(dataset_cls('valid'), batch_size=1,    shuffle=False, drop_last=False, **dataloader_kwargs)
+  validloader = DataLoader(dataset_cls('valid'), args.batch_size, shuffle=False, drop_last=False, **dataloader_kwargs)
   n_class = trainloader.dataset.n_class
 
   ''' Model & Optim '''
@@ -167,7 +167,7 @@ def train(args):
     precision='16-mixed',
     benchmark=True,
     callbacks=[checkpoint_callback],
-    limit_val_batches=1000,
+    limit_val_batches=100,
   )
   trainer.fit(lit, trainloader, validloader)
 
