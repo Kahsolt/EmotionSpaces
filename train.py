@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # Author: Armit
-# Create Time: 2023/08/16
+# Create Time: 2024/03/08
+
+# 训练多任务模型
 
 import sys
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 
-from torch.optim import Optimizer, SGD, Adam
-from torchvision.models.resnet import *
+from torch.optim import Optimizer, Adam
 from lightning import LightningModule, Trainer, seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint
 from torchmetrics.regression import MeanSquaredError
@@ -16,122 +17,149 @@ from data import *
 from model import *
 from utils import *
 
-HEAD_DATASET_CONFIGS = {
-  # 'head_type': {'dataset_cls': is_ldl}
-  'Mikels': {
-    'EmoSet': False,
-    'FI': False,
-    'ArtPhoto': False,
-    'Abstract': True,
-  },
-  'EkmanN': {
-    'Emotion6Dim7': True,
-    'FER2013': False,
-  },
-  'Ekman': {
-    'Emotion6Dim6': True,
-    'FER2013': False,
-  },
-  'VA': {
-    'Emotion6VA': False,
-    'OASIS': False,
-    'GAPED': False,
-  },
-  'Polar': {
-    'TweeterI': True,
-  }
-}
-DATASET_TO_HEAD_TYPE = {ds: head for head, ds_cfgs in HEAD_DATASET_CONFIGS.items() for ds in ds_cfgs}
-DATASETS = list(DATASET_TO_HEAD_TYPE.keys())
+
+class MixedDataset(Dataset):
+
+  def __init__(self, dataset_names:List[str], split:str, n_batch:int=200, batch_size:int=32):
+    super().__init__()
+
+    self.dataset_names = dataset_names
+    self.split = split
+    self.batch_size = batch_size
+    self.n_batch = n_batch
+    self.datasets: List[BaseDataset] = [globals()[name](split) for name in dataset_names]
+
+  @property
+  def n_datasets(self):
+    return len(self.datasets)
+
+  def __len__(self) -> int:
+    return self.n_datasets * self.n_batch * self.batch_size
+
+  def __getitem__(self, idx:int):
+    # 连续的bs个样本必须属于同一个子数据集
+    # 宏batch编号 (每个子数据集都提供ibatch个batch)
+    ibatch = idx // (self.n_datasets * self.batch_size)
+    # 宏batch内偏移
+    ibatch_offset = idx % (self.n_datasets * self.batch_size)
+    # 子数据集编号
+    idataset = ibatch_offset // self.batch_size
+    dataset = self.datasets[idataset]
+    # 样本在子数据集batch中的偏移
+    ibatch_dataset_offset = ibatch_offset % self.batch_size
+    # 该样本在子数据集全体中的顺序编号
+    idx_in_dataset = ibatch_dataset_offset + ibatch * self.batch_size
+    # 若原数据集太小，重复滚动使用
+    idx_with_cyclic = idx_in_dataset % len(dataset)
+    head_id = HEAD_NAMES.index(dataset.head.value)  # str => id
+    return *dataset[idx_with_cyclic], head_id, dataset.is_ldl
 
 
 class LitModel(LightningModule):
 
-  def __init__(self, model:MultiTaskResNet):
+  def __init__(self, model:MultiTaskNet, args:Namespace=None):
     super().__init__()
 
+    assert isinstance(model, MultiTaskNet), f'>> model must be MultiTaskNet type, but got: {type(model)}'
     self.model = model
-    # ↓↓ training specified ↓↓
-    self.args = None
-    self.head = None
-    self.is_ldl = None
-    self.lr_list: List[float] = [1e-6, 1e-4, 2e-4]
-    self.acc_train = None
-    self.acc_valid = None
-    self.mse_train = None
-    self.mse_valid = None
 
-  def setup_train_args(self, args, n_class:int):
+    # ↓↓ training specified ↓↓
+    if args: self.save_hyperparameters(args)
     self.args = args
-    self.head = DATASET_TO_HEAD_TYPE[args.dataset]
-    self.is_clf = self.head not in ['VA']
-    self.is_ldl = HEAD_DATASET_CONFIGS[self.head][args.dataset]
+    self.lr_list: List[float] = [1e-6, 2e-4, 2e-4]
+    self.metrics = nn.ModuleDict()   # {'head': {'train': _, 'valid': _}}
+    self.is_mixed_dataset: bool = None
+    self.head: str = None
+    self.is_ldl: bool = None
+
+  def setup_train_args(self):
+    args = self.args
     if args.lr_list:
       lr_list: List[float] = args.lr_list
       if isinstance(lr_list, float): lr_list = [lr_list] * len(self.lr_list)
       if len(lr_list) == 1: lr_list *= len(self.lr_list)
       assert len(lr_list) == len(self.lr_list)
       self.lr_list = lr_list
-    if self.is_clf:
-      self.acc_train = MulticlassAccuracy(n_class)
-      self.acc_valid = MulticlassAccuracy(n_class)
-    else:
-      self.mse_train = MeanSquaredError()
-      self.mse_valid = MeanSquaredError()
+
+    self.is_mixed_dataset = len(args.dataset) > 1
+    if self.is_mixed_dataset:
+      dataset_cls = get_dataset_cls(args.dataset[0])
+      self.head = dataset_cls.head.value
+      self.is_ldl = dataset_cls.is_ldl
+
+    self.metrics.clear()
+    for dataset in args.dataset:
+      dataset_cls = get_dataset_cls(dataset)
+      head = dataset_cls.head.value
+      if is_clf(head):
+        self.metrics[head] = nn.ModuleDict({
+          'm_train': MulticlassAccuracy(HEAD_DIMS[head]),   # avoid name conflict :(
+          'm_valid': MulticlassAccuracy(HEAD_DIMS[head]),
+        })
+      else:
+        self.metrics[head] = nn.ModuleDict({
+          'm_train': MeanSquaredError(),
+          'm_valid': MeanSquaredError(),
+        })
 
   def configure_optimizers(self) -> Optimizer:
     param_groups = [
-      {'params': self.model.fvecs   .parameters(), 'lr': self.lr_list[0]},
+      {'params': self.model.backbone.parameters(), 'lr': self.lr_list[0]},
       {'params': self.model.proj    .parameters(), 'lr': self.lr_list[1]},
       {'params': self.model.heads   .parameters(), 'lr': self.lr_list[2]},
       {'params': self.model.invheads.parameters(), 'lr': self.lr_list[2]},
     ]
     return Adam([it for it in param_groups if it['lr'] > 0], weight_decay=1e-5)
 
-  def optimizer_step(self, epoch:int, batch_idx:int, optim:Optimizer, optim_closure:Callable):
-    super().optimizer_step(epoch, batch_idx, optim, optim_closure)
-    #if batch_idx % 10 == 0:
-    #  self.log_dict({f'lr/group-{i}': group['lr'] for i, group in enumerate(optim.param_groups)})
+  def forward_step(self, batch:Tuple[Tensor], batch_idx:int, prefix:str) -> Tensor:
+    if self.is_mixed_dataset:
+      x, y, head_id, is_ldl = batch
+      head, is_ldl = HEAD_NAMES[head_id[0]], is_ldl[0].item()   # only need one
+    else:
+      x, y = batch
+      head, is_ldl = self.head, self.is_ldl
+    out, fvec, invfvec = self.model(x, head)
 
-  def forward_step(self, batch:Tuple[Tensor], prefix:str) -> Tensor:
-    x, y = batch
-    out, fvec, invfvec = self.model(x, self.head)
-
-    y_lbl = torch.argmax(y, dim=-1) if self.is_ldl else y
-    is_train = prefix == 'train'
-    if self.is_clf:
+    if False: print(f'>> [batch {batch_idx}] head: {head}, is_clf: {is_clf(head)}, is_ldl: {is_ldl}')
+    y_lbl = torch.argmax(y, dim=-1) if is_clf(head) and is_ldl else y
+    if is_clf(head):
       loss_clf = F.cross_entropy(out, y_lbl)
-      loss_ldl = F.kl_div(F.log_softmax(out, dim=-1), y, reduction='batchmean') if self.is_ldl else 0.0
+      loss_ldl = F.kl_div(F.log_softmax(out, dim=-1), y, reduction='batchmean', log_target=False) if is_ldl else torch.zeros_like(loss_clf)
       loss_task = loss_clf + loss_ldl * self.args.loss_w_ldl
-      metric = getattr(self, f'acc_{prefix}')
-      metric(out, y_lbl)
-      self.log(f'{prefix}/acc', metric, on_step=is_train, on_epoch=True)
     else:
       loss_task = F.mse_loss(out, y)
-      metric = getattr(self, f'mse_{prefix}')
-      metric(out, y_lbl)
-      self.log(f'{prefix}/mse', metric, on_step=is_train, on_epoch=True)
-
     loss_recon = F.mse_loss(invfvec, fvec)
     loss: Tensor = loss_task + loss_recon * self.args.loss_w_recon
 
     with torch.no_grad():
+      metric = self.metrics[head][f'm_{prefix}']
+      metric(out, y_lbl)
+      self.log(f'{prefix}/{head}', metric, on_step=True, on_epoch=True)
+
+      locals_kv = locals()
       log_dict = {
-        'l_clf': locals().get('loss_clf').item() if locals().get('loss_clf') else None,
-        'l_ldl': locals().get('loss_ldl').item() if locals().get('loss_ldl') else None,
+        'l_clf': locals_kv['loss_clf'].item() if 'loss_clf' in locals_kv else None,
+        'l_ldl': locals_kv['loss_ldl'].item() if 'loss_ldl' in locals_kv else None,
         'l_task': loss_task.item(),
         'l_rec': loss_recon.item(),
-        'l_total': loss.item(),
+        'loss': loss.item(),
       }
       log_dict = {k: v for k, v in log_dict.items() if v is not None}
       self.log_dict({f'{prefix}/{k}': v for k, v in log_dict.items()})
     return loss
 
   def training_step(self, batch:Tuple[Tensor], batch_idx:int) -> Tensor:
-    return self.forward_step(batch, 'train')
+    return self.forward_step(batch, batch_idx, 'train')
 
   def validation_step(self, batch:Tuple[Tensor], batch_idx:int) -> Tensor:
-    return self.forward_step(batch, 'valid')
+    return self.forward_step(batch, batch_idx, 'valid')
+
+  def on_train_epoch_end(self):
+    if self.is_mixed_dataset:
+      for trainloader in self.train_dataloader():
+        trainloader: DataLoader
+        trainset: BaseDataset = trainloader.dataset
+        trainset.shuffle()
 
 
 def train(args):
@@ -140,47 +168,52 @@ def train(args):
   print('>> args:', vars(args))
 
   ''' Data '''
-  assert args.dataset, 'must provide --dataset'
-  dataset_cls: Callable[[Any], Dataset] = globals()[args.dataset]
   dataloader_kwargs = {
     'num_workers': 0,
     'persistent_workers': False,
     'pin_memory': True,
   }
-  trainloader = DataLoader(dataset_cls('train'), args.batch_size, shuffle=True,  drop_last=True,  **dataloader_kwargs)
-  validloader = DataLoader(dataset_cls('valid'), args.batch_size, shuffle=False, drop_last=False, **dataloader_kwargs)
-  n_class = trainloader.dataset.n_class
+  if len(args.dataset) == 1:
+    dataset_cls = get_dataset_cls(args.dataset[0])
+    shuffle = True
+  else:
+    dataset_cls = lambda split: MixedDataset(args.dataset, split, args.n_batch_train, args.batch_size)
+    shuffle = False
+  trainloader = DataLoader(dataset_cls('train'), args.batch_size, shuffle=shuffle, drop_last=True,  **dataloader_kwargs)
+  validloader = DataLoader(dataset_cls('valid'), args.batch_size, shuffle=shuffle, drop_last=False, **dataloader_kwargs)
 
   ''' Model & Optim '''
-  model = MultiTaskResNet(args.model, args.d_x, args.head, pretrain=args.load is None)
-  lit = LitModel(model)
+  model = MultiTaskNet(args.model, args.head, args.d_x, pretrain=args.load is None)
   if args.load:
-    lit = LitModel.load_from_checkpoint(args.load, model=model)
-  lit.setup_train_args(args, n_class)
+    lit = LitModel.load_from_checkpoint(args.load, model=model, args=args)
+  else:
+    lit = LitModel(model, args)
+  lit.setup_train_args()
 
   ''' Train '''
-  metric_name = 'valid/acc' if lit.is_clf else 'valid/mse'
-  metric_mode = 'max' if lit.is_clf else 'min'
-  checkpoint_callback = ModelCheckpoint(monitor=metric_name, mode=metric_mode)
+  n_datasets = len(args.dataset)
+  checkpoint_callback = ModelCheckpoint(monitor='valid/loss', mode='min')
   trainer = Trainer(
     max_epochs=args.epochs,
     precision='16-mixed',
     benchmark=True,
     callbacks=[checkpoint_callback],
-    limit_val_batches=100,
+    accumulate_grad_batches=n_datasets,  # 每个子数据集轮流贡献一个batch
+    limit_train_batches=n_datasets*args.n_batch_train,
+    limit_val_batches=n_datasets*args.n_batch_valid,
   )
   trainer.fit(lit, trainloader, validloader)
 
 
 def get_parser():
   parser = ArgumentParser()
-  parser.add_argument('-L', '--load',  type=Path, help='load pretrained weights')
-  parser.add_argument('-M', '--model', default='resnet50', choices=['resnet50', 'resnet101'])
-  parser.add_argument('-H', '--head', default='linear', choices=['linear', 'mlp'])
+  parser.add_argument('-L', '--load',  type=Path, help='resume from pretrained weights')
+  parser.add_argument('-M', '--model', default='resnet50', choices=list(BACKBONE_CLASSES.keys()), help='backbone net')
+  parser.add_argument('-H', '--head',  default='linear',   choices=list(HEAD_CLASSES.keys()),     help='head net')
   parser.add_argument('-X', '--d_x', default=32, type=int, help='Xspace dim')
   parser.add_argument('-B', '--batch_size', type=int, default=32)
-  parser.add_argument('-E', '--epochs',     type=int, default=10)
-  parser.add_argument('-lr', '--lr_list', nargs='+', type=eval, default=2e-4, help='lr list for each part: fvecs/proj/heads/invheads')
+  parser.add_argument('-E', '--epochs',     type=int, default=100)
+  parser.add_argument('-lr', '--lr_list', nargs='+', type=eval, default=1e-5, help='lr or lr list for each part: [backbone, proj, heads/invheads]')
   parser.add_argument('--loss_w_ldl',   type=float, default=1,  help='loss weight for ldl (kl_div loss)')
   parser.add_argument('--loss_w_recon', type=float, default=10, help='loss weight for x-space reconstruction')
   parser.add_argument('--seed', type=int, default=114514)
@@ -189,7 +222,10 @@ def get_parser():
 
 if __name__ == '__main__':
   parser = get_parser()
-  parser.add_argument('-D', '--dataset', default='Emotion6Dim7', choices=DATASETS)
+  parser.add_argument('-D', '--dataset', nargs='+', default=['EmoSet', 'Emotion6Dim7', 'Emotion6Dim6', 'Emotion6VA', 'TweeterI'], choices=DATASETS)
+  parser.add_argument('--n_batch_train', default=200, type=int, help='limit n_batch for each trainset')
+  parser.add_argument('--n_batch_valid', default=10,  type=int, help='limit n_batch for each validset')
   args = parser.parse_args()
 
+  args.cmd = ' '.join(sys.argv)
   train(args)

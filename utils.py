@@ -26,6 +26,9 @@ npimg_u8 = NDArray[np.uint8]
 npimg_f32 = NDArray[np.float32]
 npimg = Union[npimg_u8, npimg_f32]
 
+exists = lambda x: x is not None
+pos_or_none = lambda x: x if x > 0 else None
+
 
 def load_pil(fp:Path) -> PILImage:
   return Image.open(fp).convert('RGB')

@@ -3,6 +3,7 @@
 # Create Time: 2023/12/27
 
 import json
+import random
 from enum import Enum
 import pandas as pd
 from torch.utils.data import Dataset, DataLoader
@@ -64,6 +65,8 @@ HEAD_CLASS_NAMES = {
 HEAD_DIMS = { k: len(v) for k, v in HEAD_CLASS_NAMES.items() }
 HEAD_NAMES = list(HEAD_DIMS.keys())
 
+is_clf = lambda head: head not in [HeadType.VA.value]
+
 
 def split_dataset(metadata:list, split:str='train', split_ratio:float=0.2) -> Tuple[list, list]:
   import random
@@ -88,19 +91,18 @@ class BaseDataset(Dataset):
     self._metadata = []
 
   @property
-  def n_class(self):
-    return HEAD_DIMS[self.head.value]
-
-  @property
   def class_names(self):
     return HEAD_CLASS_NAMES[self.head.value]
-  
+
   @property
   def metadata(self):
     return self._metadata
 
   def __len__(self):
     return len(self.metadata)
+
+  def shuffle(self):
+    random.shuffle(self._metadata)
 
 
 ''' EmoSet '''
@@ -264,6 +266,13 @@ class OASIS(BaseDataset):
 class FER2013(BaseDataset):
   
   root = DATA_FER_PATH
+
+
+DATASETS = [k for k, v in globals().items() if type(v) == type(BaseDataset) and issubclass(v, BaseDataset) and v not in [BaseDataset, Emotion6BaseDataset]]
+
+def get_dataset_cls(name:str) -> 'BaseDataset':
+  assert name in DATASETS
+  return globals()[name]
 
 
 if __name__ == '__main__':

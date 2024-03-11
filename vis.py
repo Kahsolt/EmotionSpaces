@@ -5,16 +5,18 @@
 # 查看各空间之间的投影变换
 
 from train import *
-from torch.nn import Linear
 
+import yaml
 import seaborn as sns
 import matplotlib.pyplot as plt
+
+device = 'cpu'
 
 EX_BIAS = ['(bias)']
 
 
-def get_w_and_b(head:HeadLinear) -> Tuple[ndarray, ndarray]:
-  assert isinstance(head, HeadLinear), f'>> head must be a HeadLinear, but got: {type(head)}'
+def get_w_and_b(head:LinearHead) -> Tuple[ndarray, ndarray]:
+  assert isinstance(head, LinearHead), f'>> only support LinearHead, but got: {type(head)}'
   layer = head.fc
   w = layer.weight.detach().cpu().numpy()   # [d_out, d_in]
   b = layer.bias  .detach().cpu().numpy()   # [d_out]
@@ -49,7 +51,7 @@ def savefig(mat:ndarray, xticks:Tuple[List[str]], yticks:Tuple[List[str]], title
   plt.close()
 
 
-def vis_tx_x2h(model:MultiTaskResNet):
+def vis_tx_x2h(model:MultiTaskNet, out_dp:Path):
   ''' 从 交换空间(X-space) 到 各head 的出入投影转换 '''
 
   figsize = (8, 8)
@@ -64,13 +66,13 @@ def vis_tx_x2h(model:MultiTaskResNet):
       xticks = 0.5 + np.arange(X+1), seqnum_label(X) + EX_BIAS
       yticks = 0.5 + np.arange(D), HEAD_CLASS_NAMES[name]
       title = f'X-space -> {name}'
-      fp = IMG_PATH / f'Xspace-{name}.png'
+      fp = out_dp / f'Xspace-{name}.png'
       savefig(mat_ex1.T, xticks, yticks, title, figsize, fp)
 
       xticks = 0.5 + np.arange(D+1), HEAD_CLASS_NAMES[name] + EX_BIAS
       yticks = 0.5 + np.arange(X), seqnum_label(X)
       title = f'{name} -> X-space'
-      fp = IMG_PATH / f'{name}-Xspace.png'
+      fp = out_dp / f'{name}-Xspace.png'
       savefig(mat_ex2.T, xticks, yticks, title, figsize, fp)
     except KeyboardInterrupt:
       exit(-1)
@@ -78,7 +80,7 @@ def vis_tx_x2h(model:MultiTaskResNet):
       print(f'>> [vis_tx_x2h] failed: {name}')
 
 
-def vis_tx_h2h(model:MultiTaskResNet):
+def vis_tx_h2h(model:MultiTaskNet, out_dp:Path):
   ''' 从 一个head 到 另一个head 的投影转换 '''
 
   figsize = (6, 6)
@@ -96,7 +98,7 @@ def vis_tx_h2h(model:MultiTaskResNet):
         xticks = 0.5 + np.arange(mat_ex.shape[1]), HEAD_CLASS_NAMES[src] + EX_BIAS
         yticks = 0.5 + np.arange(mat_ex.shape[0]), HEAD_CLASS_NAMES[dst]
         title = f'{src} -> {dst}'
-        fp = IMG_PATH / f'{src}-{dst}.png'
+        fp = out_dp / f'{src}-{dst}.png'
         savefig(mat_ex.T, xticks, yticks, title, figsize, fp)
       except KeyboardInterrupt:
         exit(-1)
@@ -110,10 +112,13 @@ if __name__ == '__main__':
   args = parser.parse_args()
 
   ''' Model & Ckpt '''
-  model = MultiTaskResNet(pretrain=False)
-  lit = LitModel.load_from_checkpoint(args.load, model=model, map_location='cpu')
-  model = lit.model.eval()
+  fp = Path(args.load).parent.parent / 'hparams.yaml'
+  with open(fp, 'r', encoding='utf-8') as fh:
+    hp = yaml.safe_load(fh)
+  model = MultiTaskNet(hp['model'], hp['head'], hp['d_x'], pretrain=False)
+  model = LitModel.load_from_checkpoint(args.load, model=model).model.to(device).eval()
 
   IMG_PATH.mkdir(exist_ok=True)
-  vis_tx_x2h(model)
-  vis_tx_h2h(model)
+  out_dp = IMG_PATH / 'tx' ; out_dp.mkdir(exist_ok=True)
+  vis_tx_x2h(model, out_dp)
+  vis_tx_h2h(model, out_dp)
