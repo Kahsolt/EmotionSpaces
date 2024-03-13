@@ -114,7 +114,7 @@ if __name__ == '__main__':
   ''' Model & Ckpt '''
   fp = Path(args.load).parent.parent / 'hparams.yaml'
   with open(fp, 'r', encoding='utf-8') as fh:
-    hp = yaml.safe_load(fh)
+    hp = yaml.unsafe_load(fh)
   model = MultiTaskNet(hp['model'], hp['head'], hp['d_x'], pretrain=False)
   model = LitModel.load_from_checkpoint(args.load, model=model).model.to(device).eval()
 
