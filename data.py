@@ -87,6 +87,7 @@ class BaseDataset(Dataset):
   def __init__(self, split:str='train'):
     assert split in ['train', 'valid', 'test']
     self.split = split
+    self.img_root = self.root
     self.transform = transform_train if split == 'train' else transform_test
     self._metadata = []
 
@@ -97,6 +98,9 @@ class BaseDataset(Dataset):
   @property
   def metadata(self):
     return self._metadata
+
+  def get_fps(self):
+    return [(self.img_root / mt[0]) for mt in self.metadata]
 
   def __len__(self):
     return len(self.metadata)
@@ -120,6 +124,9 @@ class EmoSet(BaseDataset):
     with open(self.root / f'{self.split}.json', 'r', encoding='utf-8') as fh:
       self._metadata = json.load(fh)
 
+  def get_fps(self):
+    return [(self.root / mt[1]) for mt in self.metadata]
+
   def __getitem__(self, idx:int):
     lbl, rfp, annot = self.metadata[idx]
     img = load_pil(self.root / rfp)
@@ -136,6 +143,7 @@ class Emotion6BaseDataset(BaseDataset):
   def __init__(self, split:str='train', split_ratio:float=0.2):
     super().__init__(split)
 
+    self.img_root = self.root / 'images'
     df = pd.read_csv(self.root / 'ground_truth.txt', sep='\t').to_numpy()
     X, Y = df[:, 0], df[:, 1:]
     self._metadata = split_dataset([(x, y) for x, y in zip(X, Y)], split, split_ratio)
@@ -237,6 +245,7 @@ class TweeterI(BaseDataset):
   def __init__(self, split:str='train', split_ratio:float=0.2):
     super().__init__(split)
 
+    self.img_root = self.root / 'Agg_AMT_Candidates'
     df = pd.read_csv(self.root / 'amt_result.csv').to_numpy()
     X = df[:, 0]
     Y = np.stack([df[:, 2] / df[:, 1], df[:, 3] / df[:, 1]], axis=-1).astype(np.float32)
