@@ -82,7 +82,7 @@ class LitModel(LightningModule):
       self.lr_list = lr_list
 
     self.is_mixed_dataset = len(args.dataset) > 1
-    if self.is_mixed_dataset:
+    if not self.is_mixed_dataset:
       dataset_cls = get_dataset_cls(args.dataset[0])
       self.head = dataset_cls.head.value
       self.is_ldl = dataset_cls.is_ldl
@@ -155,11 +155,13 @@ class LitModel(LightningModule):
     return self.forward_step(batch, batch_idx, 'valid')
 
   def on_train_epoch_end(self):
+    return
     if self.is_mixed_dataset:
       for trainloader in self.train_dataloader():
         trainloader: DataLoader
-        trainset: BaseDataset = trainloader.dataset
-        trainset.shuffle()
+        mixedset: MixedDataset = trainloader.dataset
+        for trainset in mixedset.datasets:
+          trainset.shuffle()
 
 
 def train(args):
@@ -173,14 +175,17 @@ def train(args):
     'persistent_workers': False,
     'pin_memory': True,
   }
-  if len(args.dataset) == 1:
+  n_datasets = len(args.dataset)
+  if n_datasets == 1:
+    print('>> single dataset mode:', args.dataset[0])
     dataset_cls = get_dataset_cls(args.dataset[0])
     shuffle = True
   else:
+    print('>> multi dataset mode:', args.dataset)
     dataset_cls = lambda split: MixedDataset(args.dataset, split, args.n_batch_train, args.batch_size)
     shuffle = False
   trainloader = DataLoader(dataset_cls('train'), args.batch_size, shuffle=shuffle, drop_last=True,  **dataloader_kwargs)
-  validloader = DataLoader(dataset_cls('valid'), args.batch_size, shuffle=shuffle, drop_last=False, **dataloader_kwargs)
+  validloader = DataLoader(dataset_cls('valid'), args.batch_size, shuffle=False,   drop_last=False, **dataloader_kwargs)
 
   ''' Model & Optim '''
   model = MultiTaskNet(args.model, args.head, args.d_x, pretrain=args.load is None)
@@ -191,7 +196,6 @@ def train(args):
   lit.setup_train_args()
 
   ''' Train '''
-  n_datasets = len(args.dataset)
   checkpoint_callback = ModelCheckpoint(monitor='valid/loss', mode='min')
   trainer = Trainer(
     max_epochs=args.epochs,
@@ -199,8 +203,8 @@ def train(args):
     benchmark=True,
     callbacks=[checkpoint_callback],
     accumulate_grad_batches=n_datasets,  # 每个子数据集轮流贡献一个batch
-    limit_train_batches=n_datasets*args.n_batch_train,
-    limit_val_batches=n_datasets*args.n_batch_valid,
+    limit_train_batches=n_datasets*args.n_batch_train if args.n_batch_train > 0 else None,
+    limit_val_batches=n_datasets*args.n_batch_valid if args.n_batch_valid > 0 else None,
   )
   trainer.fit(lit, trainloader, validloader)
 
