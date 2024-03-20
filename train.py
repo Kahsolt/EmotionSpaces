@@ -205,6 +205,7 @@ def train(args):
     accumulate_grad_batches=n_datasets,  # 每个子数据集轮流贡献一个batch
     limit_train_batches=n_datasets*args.n_batch_train if args.n_batch_train > 0 else None,
     limit_val_batches=n_datasets*args.n_batch_valid if args.n_batch_valid > 0 else None,
+    log_every_n_steps=5,
   )
   trainer.fit(lit, trainloader, validloader)
 

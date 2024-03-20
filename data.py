@@ -203,7 +203,7 @@ class Abstract(BaseDataset):
     tmp_class_names = [e.lower().replace('content', 'contentment').replace('sad', 'sadness') for e in original_class_names]
 
     df = pd.read_csv(self.root / 'ABSTRACT_groundTruth.csv').to_numpy()
-    X, Y = df[:, 0], df[:, 1:]
+    X, Y = df[:, 0], df[:, 1:].astype(np.float32)
     X = [fn.strip("'") for fn in X]
     Y = Y[:, [tmp_class_names.index(e) for e in self.class_names]]  # re-order for mapping
     Y /= Y.sum(axis=-1, keepdims=True)  # freq to prob

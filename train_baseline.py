@@ -56,7 +56,7 @@ class LitModel(LightningModule):
     y_lbl = torch.argmax(y, dim=-1) if self.is_ldl else y
     if self.is_clf:
       loss_clf = F.cross_entropy(out, y_lbl)
-      loss_ldl = F.kl_div(F.log_softmax(out, dim=-1), y, reduction='batchmean', log_target=False) if self.is_ldl else 0.0
+      loss_ldl = F.kl_div(F.log_softmax(out, dim=-1), y, reduction='batchmean', log_target=False) if self.is_ldl else torch.tensor(0.0).to(x.device)
       loss = loss_clf + loss_ldl * self.args.loss_w_ldl
     else:
       loss = F.mse_loss(out, y)
@@ -116,6 +116,7 @@ def train(args):
     callbacks=[checkpoint_callback],
     limit_train_batches=pos_or_none(args.n_batch_train),
     limit_val_batches=pos_or_none(args.n_batch_valid),
+    log_every_n_steps=1,
   )
   trainer.fit(lit, trainloader, validloader)
 
