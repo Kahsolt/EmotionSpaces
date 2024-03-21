@@ -15,18 +15,21 @@ device = 'cpu'
 EX_BIAS = ['(bias)']
 
 
-def get_w_and_b(head:LinearHead) -> Tuple[ndarray, ndarray]:
+def get_w_and_b(head:LinearHead) -> Tuple[ndarray, Optional[ndarray]]:
   assert isinstance(head, LinearHead), f'>> only support LinearHead, but got: {type(head)}'
   layer = head.fc
   w = layer.weight.detach().cpu().numpy()   # [d_out, d_in]
-  b = layer.bias  .detach().cpu().numpy()   # [d_out]
+  b = layer.bias  .detach().cpu().numpy() if layer.bias else None  # [d_out]
   return w, b
 
 def expanded_matrix(w:ndarray, b:ndarray) -> ndarray:
   assert len(w.shape) == 2
-  assert len(b.shape) == 1
-  assert w.shape[0] == b.shape[0]
-  return np.concatenate([w, np.expand_dims(b, axis=-1)], axis=-1)
+  if b is not None:
+    assert len(b.shape) == 1
+    assert w.shape[0] == b.shape[0]
+    return np.concatenate([w, np.expand_dims(b, axis=-1)], axis=-1)
+  else:
+    return w
 
 def seqnum_label(nlen:int) -> List[str]:
   return [str(e + 1) for e in range(nlen)]
@@ -63,13 +66,13 @@ def vis_tx_x2h(model:MultiTaskNet, out_dp:Path):
       mat_ex1 = expanded_matrix(w1, b1)   # [D, X+1]
       mat_ex2 = expanded_matrix(w2, b2)   # [X, D+1]
 
-      xticks = 0.5 + np.arange(X+1), seqnum_label(X) + EX_BIAS
+      xticks = 0.5 + np.arange(X+len(EX_BIAS)), seqnum_label(X) + EX_BIAS
       yticks = 0.5 + np.arange(D), HEAD_CLASS_NAMES[name]
       title = f'X-space -> {name}'
       fp = out_dp / f'Xspace-{name}.png'
       savefig(mat_ex1.T, xticks, yticks, title, figsize, fp)
 
-      xticks = 0.5 + np.arange(D+1), HEAD_CLASS_NAMES[name] + EX_BIAS
+      xticks = 0.5 + np.arange(D+len(EX_BIAS)), HEAD_CLASS_NAMES[name] + EX_BIAS
       yticks = 0.5 + np.arange(X), seqnum_label(X)
       title = f'{name} -> X-space'
       fp = out_dp / f'{name}-Xspace.png'
@@ -90,9 +93,14 @@ def vis_tx_h2h(model:MultiTaskNet, out_dp:Path):
         # dst = head(invhead(src))
         w1, b1 = get_w_and_b(model.invheads[src])
         w2, b2 = get_w_and_b(model.heads[dst])
-        # Y = w2 * (w1 * X + b1) + b2
-        w_tx = w2 @ w1
-        b_tx = w2 @ b1 + b2
+        if b1 is not None and b2 is not None:
+          # Y = w2 * (w1 * X + b1) + b2
+          w_tx = w2 @ w1
+          b_tx = w2 @ b1 + b2
+        else:
+          # Y = w2 * (w1 * X)
+          w_tx = w2 @ w1
+          b_tx = None
         mat_ex = expanded_matrix(w_tx, b_tx)  # [D+1, D']
 
         xticks = 0.5 + np.arange(mat_ex.shape[1]), HEAD_CLASS_NAMES[src] + EX_BIAS
@@ -117,6 +125,7 @@ if __name__ == '__main__':
     hp = yaml.unsafe_load(fh)
   model = MultiTaskNet(hp['model'], hp['head'], hp['d_x'], pretrain=False)
   model = LitModel.load_from_checkpoint(args.load, model=model).model.to(device).eval()
+  if not getattr(hp, 'has_bias', True): EX_BIAS.clear()
 
   IMG_PATH.mkdir(exist_ok=True)
   out_dp = IMG_PATH / 'tx' ; out_dp.mkdir(exist_ok=True)

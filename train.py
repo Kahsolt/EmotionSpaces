@@ -216,6 +216,7 @@ def get_parser():
   parser.add_argument('-M', '--model', default='resnet50', choices=list(BACKBONE_CLASSES.keys()), help='backbone net')
   parser.add_argument('-H', '--head',  default='linear',   choices=list(HEAD_CLASSES.keys()),     help='head net')
   parser.add_argument('-X', '--d_x', default=32, type=int, help='Xspace dim')
+  parser.add_argument('-bias', '--use_bias', default=1, type=int, help='use bias in head Linear layers')
   parser.add_argument('-B', '--batch_size', type=int, default=32)
   parser.add_argument('-E', '--epochs',     type=int, default=100)
   parser.add_argument('-lr', '--lr_list', nargs='+', type=eval, default=1e-5, help='lr or lr list for each part: [backbone, proj, heads/invheads]')
@@ -233,4 +234,5 @@ if __name__ == '__main__':
   args = parser.parse_args()
 
   args.cmd = ' '.join(sys.argv)
+  args.use_bias = bool(args.use_bias)
   train(args)

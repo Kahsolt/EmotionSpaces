@@ -125,14 +125,14 @@ class LinearHead(nn.Module):
 
 class MLPHead(nn.Module):
   
-  def __init__(self, d_in:int, d_out:int, d_hid:int=None):
+  def __init__(self, d_in:int, d_out:int, bias:bool=True, d_hid:int=None):
     super().__init__()
 
     d_hid = d_hid or round((d_in + d_out) * 1.5)
     self.mlp = nn.Sequential(
-      nn.Linear(d_in, d_hid),
+      nn.Linear(d_in, d_hid, bias),
       nn.SiLU(inplace=True),
-      nn.Linear(d_hid, d_out),
+      nn.Linear(d_hid, d_out, bias),
     )
 
   def forward(self, x:Tensor) -> Tensor:
@@ -161,7 +161,7 @@ inv_softmax = lambda x: torch.log(x + 1e-15) + torch.log(torch.Tensor([10]))
 
 class MultiTaskNet(nn.Module):
 
-  def __init__(self, backbone_type:str='resnet50', head_type:str='linear', d_x:int=32, pretrain:bool=False):
+  def __init__(self, backbone_type:str='resnet50', head_type:str='linear', d_x:int=32, use_bias:bool=True, pretrain:bool=False):
     super().__init__()
 
     # 预训练的backbone作特征提取器
@@ -171,10 +171,10 @@ class MultiTaskNet(nn.Module):
     # 各下游任务使用不同的head/invhead
     head_cls = HEAD_CLASSES[head_type]
     self.heads = nn.ModuleDict({
-      name: head_cls(d_x, d_out) for name, d_out in HEAD_DIMS.items()
+      name: head_cls(d_x, d_out, use_bias) for name, d_out in HEAD_DIMS.items()
     })
     self.invheads = nn.ModuleDict({
-      name: head_cls(HEAD_DIMS[name], d_x) for name in self.heads.keys()
+      name: head_cls(HEAD_DIMS[name], d_x, use_bias) for name in self.heads.keys()
     })
 
   @property

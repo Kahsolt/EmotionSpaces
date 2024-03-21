@@ -116,7 +116,7 @@ def train(args):
     callbacks=[checkpoint_callback],
     limit_train_batches=pos_or_none(args.n_batch_train),
     limit_val_batches=pos_or_none(args.n_batch_valid),
-    log_every_n_steps=1,
+    log_every_n_steps=5,
   )
   trainer.fit(lit, trainloader, validloader)
 
