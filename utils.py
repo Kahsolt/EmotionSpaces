@@ -21,6 +21,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 BASE_PATH = Path(__file__).parent
 IMG_PATH = BASE_PATH / 'img'
+LOG_PATH = BASE_PATH / 'log'
 
 npimg_u8 = NDArray[np.uint8]
 npimg_f32 = NDArray[np.float32]

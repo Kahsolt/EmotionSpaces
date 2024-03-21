@@ -11,15 +11,18 @@ import imagesize
 log_dp = IMG_PATH / 'hw'
 log_dp.mkdir(exist_ok=True)
 
-DATASETS = [
-  'Emotion6Dim6',
-  'Abstract',
-  'ArtPhoto',
-  'TweeterI',
-  'EmoSet',
+DATASETS_IGNORE = [
+  'Emotion6Dim7',
+  'Emotion6VA',
 ]
 
 for name in DATASETS:
+  if name in DATASETS_IGNORE: continue
+  save_fp = log_dp / f'{name}.png'
+  if save_fp.exists():
+    print(f'>> ignore {name} due to file exists')
+    continue
+
   print(f'>> process {name}')
   dataset_cls = get_dataset_cls(name)
 
@@ -40,7 +43,7 @@ for name in DATASETS:
 
     if not hs: continue
     plt.tight_layout()
-    plt.savefig(log_dp / f'{name}.png')
+    plt.savefig(save_fp)
     plt.close()
   except KeyboardInterrupt:
     exit(-1)
