@@ -6,7 +6,6 @@ import tkinter as tk
 import tkinter.ttk as ttk
 import tkinter.messagebox as tkmsg
 import tkinter.filedialog as tkfdlg
-from functools import partial
 from argparse import ArgumentParser
 from traceback import print_exc, format_exc
 
@@ -22,8 +21,15 @@ from train import *
 device = 'cpu'
 
 WINDOW_TITLE = 'EmotionSpaces'
-WINDOW_SIZE  = (1000, 800)
+WINDOW_SIZE  = (912, 860)
 IMG_RESIZE = (384, 384)
+
+PLOT_VA_VLIM = 2
+TEXT_VA_OFFSET = 0.1
+TEXT_V_OFFSET = 0.7
+TEXT_A_OFFSET = 0.2
+TEXT_MARK_OFFSET = 0.15
+EPS = 1e-3
 
 
 class App:
@@ -77,7 +83,7 @@ class App:
     frm2 = ttk.Frame(wnd)
     frm2.pack(expand=tk.YES, fill=tk.BOTH)
     if True:
-      # left: img + VA
+      # left: img + VA plot
       frm21 = ttk.Frame(frm2)
       frm21.pack(side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
       if True:
@@ -102,16 +108,17 @@ class App:
           # https://blog.csdn.net/qq_44864262/article/details/107738440
           fig = plt.figure(figsize=(4, 4))
           fig.tight_layout()
-          ax = fig.gca()
-          ax.annotate('', xy=(10.1, 0), xytext=(-10.1, 0), arrowprops={'arrowstyle': '->', 'connectionstyle': 'arc3'})
-          ax.annotate('', xy=(0, 10.1), xytext=(0, -10.1), arrowprops={'arrowstyle': '->', 'connectionstyle': 'arc3'})
-          ax.text(7.0, 0.5, class_names[0])
-          ax.text(0.5, 9.0, class_names[1])
-          ax.set_xlim(-10.1, 10.1)
-          ax.set_ylim(-10.1, 10.1)
+          ax: Axes = fig.gca()
+          arrowprops = {'arrowstyle': '->', 'connectionstyle': 'arc3'}
+          ax.annotate('', xy=(PLOT_VA_VLIM+0.1, 0), xytext=(-PLOT_VA_VLIM-0.1, 0), arrowprops=arrowprops)
+          ax.annotate('', xy=(0, PLOT_VA_VLIM+0.1), xytext=(0, -PLOT_VA_VLIM-0.1), arrowprops=arrowprops)
+          ax.text(PLOT_VA_VLIM-TEXT_V_OFFSET, TEXT_VA_OFFSET, class_names[0])
+          ax.text(TEXT_VA_OFFSET, PLOT_VA_VLIM-TEXT_A_OFFSET, class_names[1])
+          ax.set_xlim(-PLOT_VA_VLIM-0.1, PLOT_VA_VLIM+0.1)
+          ax.set_ylim(-PLOT_VA_VLIM-0.1, PLOT_VA_VLIM+0.1)
+          self.mark = ax.text(0, 0, '★', c='r', fontsize='xx-large')
           cvs = FigureCanvasTkAgg(fig, frm212)
           cvstk = cvs.get_tk_widget()
-          cvstk.bind('<Button-1>', lambda _: tkmsg.showinfo('are you ok?'))
           cvstk.pack(expand=tk.YES, fill=tk.BOTH)
           if not 'toolbar':
             toolbar = NavigationToolbar2Tk(cvs, frm212, pack_toolbar=False)
@@ -123,24 +130,41 @@ class App:
       frm22 = ttk.Frame(frm2)
       frm22.pack(side=tk.RIGHT, expand=tk.YES, fill=tk.BOTH)
       if True:
-        for head in [e.value for e in [HeadType.Polar, HeadType.Ekman, HeadType.EkmanN, HeadType.Mikels]]:
-          refresh_fn = lambda _: partial(self.refresh, head)()
-          frm22x = ttk.LabelFrame(frm22, text=head)
-          frm22x.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
-          if True:
-            self.var_heads[head] = []
-            self.lbl_heads[head] = []
-            for ihead in range(HEAD_DIMS[head]):
-              frm22xy = ttk.Frame(frm22x)
-              frm22xy.pack(side=tk.LEFT, expand=tk.YES, fill=tk.Y)
-              if True:
-                var = tk.DoubleVar(wnd)
-                self.var_heads[head].append(var)
-                sc = tk.Scale(frm22xy, command=refresh_fn, variable=var, orient=tk.VERTICAL, from_=1.0, to=0.0, resolution=0.001)
-                sc.pack(side=tk.TOP, expand=tk.YES, fill=tk.Y)
-                lbl = ttk.Label(frm22xy, text=HEAD_CLASS_NAMES[head][ihead], foreground='blue')
-                lbl.pack(side=tk.BOTTOM, expand=tk.YES, fill=tk.Y)
-                self.lbl_heads[head].append(lbl)
+        # VA and Polar share the same row
+        frm22z = ttk.Frame(frm22)
+        frm22z.pack(side=tk.TOP, expand=tk.YES, fill=tk.BOTH)
+        if True:
+          for head in [e.value for e in [HeadType.VA, HeadType.Polar]]:
+            self.setup_gui_control_group(head, frm22z, tk.LEFT)
+        # one per row for others
+        for head in [e.value for e in [HeadType.Ekman, HeadType.EkmanN, HeadType.Mikels]]:
+          self.setup_gui_control_group(head, frm22, tk.TOP)
+
+  def setup_gui_control_group(self, head:str, master:tk.Widget, side:str=tk.TOP):
+    if head == 'VA':
+      vstart, vend, vstep = PLOT_VA_VLIM, -PLOT_VA_VLIM, 0.1
+    else:
+      vstart, vend, vstep = 1.0, 0.0, 0.001
+
+    frm = ttk.LabelFrame(master, text=head)
+    frm.pack(side=side, expand=tk.YES, fill=tk.BOTH)
+    if True:
+      # NOTE: here head must be provided as default value for early value binding :(
+      refresh_fn = lambda value, head=head: self.refresh(head)
+      class_names = HEAD_CLASS_NAMES[head]
+      self.var_heads[head] = []
+      self.lbl_heads[head] = []
+      for ihead in range(HEAD_DIMS[head]):
+        sfrm = ttk.Frame(frm)
+        sfrm.pack(side=tk.LEFT, expand=tk.YES, fill=tk.Y)
+        if True:
+          var = tk.DoubleVar(self.wnd)
+          sc = tk.Scale(sfrm, command=refresh_fn, variable=var, orient=tk.VERTICAL, from_=vstart, to=vend, resolution=vstep)
+          sc.pack(side=tk.TOP, expand=tk.YES, fill=tk.Y)
+          lbl = ttk.Label(sfrm, text=class_names[ihead], foreground='blue')
+          lbl.pack(side=tk.BOTTOM, expand=tk.YES, fill=tk.Y)
+          self.var_heads[head].append(var)
+          self.lbl_heads[head].append(lbl)
 
   def open_(self):
     fp = tkfdlg.askopenfilename()
@@ -157,10 +181,9 @@ class App:
     self.pv.img = img
     self.refresh()
 
-  @torch.inference_mode()
   def refresh(self, head:str=None):
     def get_head_vars(head:str) -> ndarray:
-      return np.asarray([var.get() for var in self.var_heads[head]], dtype=np.float32)
+      return np.asarray([max(var.get(), EPS) for var in self.var_heads[head]], dtype=np.float32)
     def set_head_vars(head:str, vals:ndarray):
       # probdist norm
       if is_clf(head) and vals.sum() > 0:
@@ -183,7 +206,7 @@ class App:
         set_head_vars(head, ev)
     else:               # space tranx
       # probdist renorm
-      set_head_vars(head, get_head_vars(head))
+      if head != 'VA': set_head_vars(head, get_head_vars(head))
       # inv to Xspace
       ev = torch.from_numpy(get_head_vars(head)).float().unsqueeze(dim=0).to(device)
       xv = self.model.ev_to_xv(ev, head)
@@ -192,6 +215,12 @@ class App:
         if to_head == head: continue
         ev = self.model.xv_to_ev(xv, to_head)[0].cpu().numpy()
         set_head_vars(to_head, ev)
+
+    # update the mark on VA-plot
+    var_V, var_A = self.var_heads['VA']
+    self.mark.set_x(var_V.get() - TEXT_MARK_OFFSET)
+    self.mark.set_y(var_A.get() - TEXT_MARK_OFFSET)
+    self.cvs.draw()
 
 
 if __name__ == '__main__':
