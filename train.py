@@ -155,13 +155,11 @@ class LitModel(LightningModule):
     return self.forward_step(batch, batch_idx, 'valid')
 
   def on_train_epoch_end(self):
-    return
     if self.is_mixed_dataset:
-      for trainloader in self.train_dataloader():
-        trainloader: DataLoader
-        mixedset: MixedDataset = trainloader.dataset
-        for trainset in mixedset.datasets:
-          trainset.shuffle()
+      trainloader: DataLoader =  self.trainer.fit_loop._data_source.instance
+      mixedset: MixedDataset = trainloader.dataset
+      for trainset in mixedset.datasets:
+        trainset.shuffle()
 
 
 def train(args):
