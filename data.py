@@ -5,6 +5,9 @@
 import json
 import random
 from enum import Enum
+
+import lmdb
+import h5py
 import pandas as pd
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as T
@@ -19,6 +22,7 @@ DATA_TWEETERI_PATH = DATA_PATH / 'Twitter_PCNN'
 DATA_FI_PATH = DATA_PATH / 'emotion_dataset'
 DATA_OASIS_PATH = DATA_PATH / 'OASIS_database_2016'
 DATA_EMOSET_PATH = DATA_PATH / 'EmoSet-118K'
+DATA_FLICKRLDL_TWITTERLDL_PATH = DATA_PATH / 'FlickrTwitterLDL'
 
 RESIZE = (224, 224)
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
@@ -303,6 +307,61 @@ class FI(BaseDataset):
     img = load_pil(fp)
     img = self.transform(img)
     return img, prob
+
+
+''' FlickrDLD & TwitterLDL '''
+
+class FTLDLBaseDataset(BaseDataset):
+
+  root = DATA_FLICKRLDL_TWITTERLDL_PATH
+  is_ldl = True
+
+  def __init__(self, name:str, split:str='train'):
+    super().__init__(split)
+
+    meta_file = self.root / f'{name}_config.mat'
+    db_folder = self.root / 'lmdb_file' / f'{"test" if split == "valid" else split}_{name}_split1_lmdb'
+
+    with h5py.File(meta_file) as meta:
+      refs = meta.get('imgname')[...].squeeze()
+      fns = [''.join([chr(e) for e in meta['#refs#'][ref][...].squeeze().tolist()]) for ref in refs]
+      probs = np.array(meta.get('vote')[...].T.astype(np.float32))
+    self.db = lmdb.Environment(str(db_folder), readonly=True, create=False)
+    self.keys: List[bytes] = [k for k, _ in self.db.begin().cursor()]
+    self.fn_to_key: Dict[str, bytes] = {}
+    for key in self.keys:
+      k = key.decode().split('_')[-1]
+      if k in fns:
+        self.fn_to_key[k] = key
+    self._metadata = list(zip(fns, probs))
+
+  def __del__(self):
+    self.db.close()
+
+  def get_fps(self):
+    return []
+
+  def __getitem__(self, idx:int) -> int:
+    key, prob = self.metadata[idx]
+    bdata: bytes = self.db.begin().get(self.fn_to_key[key])
+    # TODO: what the fuck format is??
+    bdata
+    img = self.transform(img)
+    return img, prob
+
+class FlickrLDL(FTLDLBaseDataset):
+
+  head = HeadType.Ekman
+
+  def __init__(self, split:str='train'):
+    super().__init__('flickrldl', split)
+
+class TwitterLDL(FTLDLBaseDataset):
+
+  head = HeadType.Ekman
+
+  def __init__(self, split:str='train'):
+    super().__init__('twitterldl', split)
 
 
 ''' others '''
