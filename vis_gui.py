@@ -29,7 +29,7 @@ TEXT_VA_OFFSET = 0.1
 TEXT_V_OFFSET = 0.7
 TEXT_A_OFFSET = 0.2
 TEXT_MARK_OFFSET = 0.15
-EPS = 1e-3
+EPS = 1e-5
 
 
 class App:
@@ -183,7 +183,7 @@ class App:
 
   def refresh(self, head:str=None):
     def get_head_vars(head:str) -> ndarray:
-      return np.asarray([max(var.get(), EPS) for var in self.var_heads[head]], dtype=np.float32)
+      return np.asarray([max(var.get(), EPS) if head != 'VA' else var.get() for var in self.var_heads[head]], dtype=np.float32)
     def set_head_vars(head:str, vals:ndarray):
       # probdist norm
       if is_clf(head) and vals.sum() > 0:

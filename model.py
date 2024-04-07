@@ -156,7 +156,8 @@ HEAD_CLASSES = {
 Backbone = Union[ResnetBackbone, ViTBackbone, MobileNetBackbone]
 Head = Union[LinearHead, MLPHead]
 
-inv_softmax = lambda x: torch.log(x + 1e-15) + torch.log(torch.Tensor([10]))
+# https://math.stackexchange.com/questions/2786600/invert-the-softmax-function
+inv_softmax = lambda x: torch.log(x + 1e-15) + torch.log(torch.exp(x).sum())
 
 
 class MultiTaskNet(nn.Module):
