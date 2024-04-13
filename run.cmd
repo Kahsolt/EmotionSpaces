@@ -43,12 +43,12 @@ REM Step 1: refine a base ckpt with EmoSet (full weights)
 python train.py -M %MODEL% -D EmoSet -lr 1e-4 --n_batch_train -1 --n_batch_valid -1
 
 REM Step 2: train on mixed datasets (non-pretrained weights)
-SET LOAD=lightning_logs\version_18\checkpoints\epoch=12-step=38376.ckpt
+SET LOAD=
 python train.py -L %LOAD% -M %MODEL% -D %DATASETS% -lr 0 4e-5 1e-4
 
 REM Step 3: refine on mixed datasets (full weights)
-SET LOAD=lightning_logs\version_27\checkpoints\epoch=95-step=19200.ckpt
-python train.py -L %LOAD% -M %MODEL% -D %DATASETS% -lr 2e-6
+SET LOAD=
+python train.py -L %LOAD% -M %MODEL% -D %DATASETS% -lr 2e-6 -B 16
 
 
 :train_mlp
@@ -56,12 +56,12 @@ REM Step 1: refine a base ckpt with EmoSet (full weights)
 python train.py -H mlp -M %MODEL% -D EmoSet -lr 1e-4 --n_batch_train -1 --n_batch_valid -1
 
 REM Step 2: train on mixed datasets (non-pretrained weights)
-SET LOAD=lightning_logs\version_33\checkpoints\epoch=14-step=44280.ckpt
+SET LOAD=lightning_logs\MTN-vit-mlp-backbone\checkpoints\epoch=10-step=32472.ckpt
 python train.py -H mlp -L %LOAD% -M %MODEL% -D %DATASETS% -lr 0 4e-5 1e-4
 
 REM Step 3: refine on mixed datasets (full weights)
-SET LOAD=lightning_logs\version_36\checkpoints\epoch=99-step=20000.ckpt
-python train.py -H mlp -L %LOAD% -M %MODEL% -D %DATASETS% -lr 2e-6
+SET LOAD=
+python train.py -H mlp -L %LOAD% -M %MODEL% -D %DATASETS% -lr 2e-6 -B 16
 
 
 :visualize_xweights
